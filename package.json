@@ -1,0 +1,36 @@
+{
+  "name": "authenticity-platform",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "postinstall": "node scripts/patch-wasm-imports.cjs"
+  },
+  "dependencies": {
+    "@runanywhere/web": "^0.1.0-beta.10",
+    "@runanywhere/web-llamacpp": "^0.1.0-beta.10",
+    "@runanywhere/web-onnx": "^0.1.0-beta.10",
+    "ethers": "^6.16.0",
+    "framer-motion": "^12.35.2",
+    "lucide-react": "^0.577.0",
+    "next": "16.1.6",
+    "qrcode.react": "^4.2.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
