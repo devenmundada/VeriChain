@@ -1,0 +1,152 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #0A0A0B;
+  --color-foreground: #FFFFFF;
+  --color-verified: #39FF14;
+  --color-forgery: #FF3131;
+  --color-border: #1E1E22;
+  --color-border-glow: #2A2A30;
+  --color-glass: rgba(14, 14, 16, 0.7);
+  --color-glass-light: rgba(30, 30, 34, 0.5);
+  --color-accent: #39FF14;
+  --color-accent-dim: rgba(57, 255, 20, 0.15);
+  --color-danger: #FF3131;
+  --color-danger-dim: rgba(255, 49, 49, 0.15);
+  --color-warning: #FFB800;
+  --color-warning-dim: rgba(255, 184, 0, 0.15);
+  --color-info: #00B4D8;
+  --color-info-dim: rgba(0, 180, 216, 0.15);
+  --font-sans: var(--font-clash);
+  --font-mono: var(--font-jetbrains);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1E1E22 transparent;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Noise overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+/* Glass card base */
+.glass-card {
+  background: var(--color-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+  position: relative;
+  overflow: hidden;
+}
+
+.glass-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.02) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.glass-card:hover {
+  border-color: var(--color-border-glow);
+}
+
+/* Terminal text effect */
+.terminal-text {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--color-verified);
+}
+
+/* Glow effects */
+.glow-green {
+  box-shadow: 0 0 20px rgba(57, 255, 20, 0.1), inset 0 0 20px rgba(57, 255, 20, 0.03);
+}
+
+.glow-red {
+  box-shadow: 0 0 20px rgba(255, 49, 49, 0.1), inset 0 0 20px rgba(255, 49, 49, 0.03);
+}
+
+/* Scanning animation */
+@keyframes scan {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes radar-sweep {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes glitch {
+  0% { transform: translate(0); filter: hue-rotate(0deg); }
+  20% { transform: translate(-2px, 2px); filter: hue-rotate(90deg); }
+  40% { transform: translate(2px, -2px); filter: hue-rotate(180deg); }
+  60% { transform: translate(-1px, -1px); filter: hue-rotate(270deg); }
+  80% { transform: translate(1px, 1px); filter: hue-rotate(360deg); }
+  100% { transform: translate(0); filter: hue-rotate(0deg); }
+}
+
+@keyframes typewriter {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+.animate-scan {
+  animation: scan 3s ease-in-out infinite;
+}
+
+.animate-radar {
+  animation: radar-sweep 4s linear infinite;
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
+
+.animate-glitch {
+  animation: glitch 0.3s ease-in-out;
+}
+
+/* Custom scrollbar for panels */
+.custom-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scroll::-webkit-scrollbar-thumb {
+  background: #1E1E22;
+  border-radius: 2px;
+}
+.custom-scroll::-webkit-scrollbar-thumb:hover {
+  background: #2A2A30;
+}
