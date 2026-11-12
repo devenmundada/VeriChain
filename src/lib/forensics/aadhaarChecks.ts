@@ -150,10 +150,11 @@ export async function runAadhaarChecks(
       compared++;
       if (!printedLast4.includes(qr.last4)) {
         mismatches.push("number");
+        const sureNum = source === "pdf" || (ocrWordConfidence?.(printedLast4[0]) ?? 0) >= 85;
         const bs = printedNumbers.length ? findBoxes(boxes, printedNumbers[0]) : boxes.filter((b) => maskedLast4.some((m) => b.str.includes(m)));
         ev({
           category: "aadhaar",
-          severity: "critical",
+          severity: sureNum ? "critical" : "warning",
           title: "Aadhaar number doesn't match the QR",
           detail: `The QR says the number ends in ${qr.last4}, but the card shows …${printedLast4[0]}.`,
           regions: [...regionsFor(bs, "number ≠ QR"), ...qrRegion],
@@ -194,15 +195,19 @@ export async function runAadhaarChecks(
     }
     if ((qr.dob && pd.dob) || (qr.yob && pd.yob)) compared++;
     if (qg0(qr.gender) && pg) compared++;
+    const ocrSure = (needle: string) => source === "pdf" || (ocrWordConfidence?.(needle) ?? 0) >= 85;
     if (qr.dob && pd.dob && qr.dob.replace(/\//g, "-") !== pd.dob) {
       mismatches.push("dob");
       const raw = pd.dob.split("-");
       const bs = boxes.filter((b) => b.str.includes(raw[2]) && (b.str.includes(raw[0]) || b.str.includes(raw[1])));
+      const sure = ocrSure(pd.dob);
       ev({
         category: "aadhaar",
-        severity: "critical",
+        severity: sure ? "critical" : "warning",
         title: "Date of birth doesn't match the QR",
-        detail: `The signed QR says ${qr.dob}, but the card shows ${pd.dob}.`,
+        detail: sure
+          ? `The signed QR says ${qr.dob}, but the card shows ${pd.dob}.`
+          : `The signed QR says ${qr.dob}; the date read from the image is ${pd.dob}. The image text may be misread — check the printed date by eye. If it really shows ${pd.dob}, the card was edited.`,
         regions: [...regionsFor(bs, "DOB ≠ QR"), ...qrRegion],
         layerId: "aadhaar",
         change: { before: `${qr.dob} (QR)`, after: `${pd.dob} (printed)`, field: "Date of birth" },
@@ -211,7 +216,7 @@ export async function runAadhaarChecks(
       mismatches.push("yob");
       ev({
         category: "aadhaar",
-        severity: "critical",
+        severity: ocrSure(pd.yob) ? "critical" : "warning",
         title: "Birth year doesn't match the QR",
         detail: `The QR says ${qr.yob}, but the card shows ${pd.yob}.`,
         regions: [...regionsFor(boxes.filter((b) => b.str.includes(pd.yob!)), "year ≠ QR"), ...qrRegion],

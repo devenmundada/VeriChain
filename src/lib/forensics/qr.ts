@@ -63,6 +63,8 @@ export async function readQRCodesRobust(canvas: HTMLCanvasElement): Promise<QRHi
   const attempts: { sx: number; sy: number; sw: number; sh: number; scale: number }[] = [];
   const longSide = Math.max(W, H);
   if (longSide > 1800) attempts.push({ sx: 0, sy: 0, sw: W, sh: H, scale: 1600 / longSide });
+  // small screenshots: a dense QR may have ~2 px per module — enlarging helps the binarizer
+  if (longSide < 1600) attempts.push({ sx: 0, sy: 0, sw: W, sh: H, scale: Math.min(2.5, 3200 / longSide) });
   for (const [fx, fy] of [[0, 0], [0.4, 0], [0, 0.4], [0.4, 0.4], [0.2, 0.2]]) {
     attempts.push({ sx: Math.round(W * fx), sy: Math.round(H * fy), sw: Math.round(W * 0.6), sh: Math.round(H * 0.6), scale: Math.min(2, 2000 / Math.max(W * 0.6, H * 0.6)) });
   }

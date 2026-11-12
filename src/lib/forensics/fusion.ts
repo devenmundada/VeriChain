@@ -73,11 +73,14 @@ export function fuse(
   layers: TamperLayer[],
   evidenceIn: Evidence[],
   checks: CheckRun[],
-  opts: { lowContent?: boolean } = {}
+  opts: { lowContent?: boolean; idCard?: boolean; idVerifiable?: boolean } = {}
 ): FusionResult {
   const fused = TamperGrid.like(grid);
   const C = fused.cols, R = fused.rows;
-  const gridLayers = layers.filter((l) => l.grid);
+  // ID cards (Aadhaar) have photos, emblems, colour bands, Hindi and bold fonts that trip pixel/font
+  // statistics. For them the verdict and heatmap use only deterministic checks.
+  const STATISTICAL = new Set(["px-noise", "px-ela", "px-bg", "glyph", "pdf-font"]);
+  const gridLayers = layers.filter((l) => l.grid && !(opts.idCard && STATISTICAL.has(l.id)));
   const agree = new Uint8Array(fused.data.length);
 
   for (let k = 0; k < fused.data.length; k++) {
@@ -111,11 +114,8 @@ export function fuse(
       v = Math.max(v, 0.85);
       agree[k] = 1;
     }
-    else if (groups.size === 1) {
-      const only = [...groups.values()][0];
-      // a single statistical detector only counts where it actually fired
-      if (gridLayers.some((l) => !l.critical && l.grid![k] >= 0.5)) v = Math.max(v, 0.35 + only * 0.25);
-    }
+    // a single statistical detector on its own is not painted on the combined map
+    // (it shows in its own layer) — borders, colour bands and logos would glow otherwise
     fused.data[k] = v;
   }
 
@@ -148,7 +148,13 @@ export function fuse(
     });
   }
 
-  const ev = dedupe(evidence);
+  const idInfo =
+    "Shown for information only: ID cards have photos, emblems and colour bands that trip pixel and font statistics, so the verdict uses the QR, check digit and file structure instead. ";
+  const ev = dedupe(evidence).map((e) =>
+    opts.idCard && (e.severity === "warning" || e.severity === "critical") && (e.category === "pixel" || e.category === "glyph" || e.category === "pdf-font")
+      ? { ...e, severity: "info" as const, detail: idInfo + e.detail }
+      : e
+  );
   const crit = ev.filter((e) => e.severity === "critical");
   const warn = ev.filter((e) => e.severity === "warning");
   const pass = ev.filter((e) => e.severity === "pass");
@@ -166,6 +172,9 @@ export function fuse(
   } else if (warn.length) {
     verdict = "SUSPICIOUS";
     title = warn.length >= 3 ? "Likely edited" : "Suspicious — check the flagged areas";
+  } else if (opts.idCard && opts.idVerifiable === false) {
+    verdict = "INCONCLUSIVE";
+    title = "Couldn't verify — QR not readable";
   } else if (ran < 3 || opts.lowContent) {
     verdict = "INCONCLUSIVE";
     title = "Not enough evidence to judge";
@@ -200,7 +209,10 @@ export function fuse(
   }
 
   const changes = ev.filter((e) => e.change && e.severity === "critical").map((e) => e.change!);
-  const summary = buildSummary(verdict, crit, warn, pass);
+  const summary =
+    verdict === "INCONCLUSIVE" && opts.idCard && opts.idVerifiable === false
+      ? "The Aadhaar QR code couldn't be read, so the strongest check (UIDAI-signed QR vs printed details) didn't run — and pixel statistics aren't reliable on ID cards. Upload the e-Aadhaar PDF, or a larger, sharper image where the QR is clearly visible."
+      : buildSummary(verdict, crit, warn, pass);
 
   const hotspots = fused.regions(0.5).slice(0, 24).map((rg: Region) => {
     let intensity = 0;

@@ -213,17 +213,21 @@ export function similarity(a: string, b: string): number {
   return 1 - dp[m][n] / Math.max(m, n);
 }
 
-/** Best match of `needle` inside the lines of `hay`, by sliding a window of the same word count. */
+/** Best match of `needle` inside `hay`: windows of n-1..n+1 words, compared with and without
+ *  spaces (OCR often merges or splits words, e.g. "TESTPERSON"). */
 export function bestNameMatch(needle: string, hay: string): { score: number; found: string } {
   const target = normName(needle);
+  const targetTight = target.replace(/ /g, "");
   const words = target.split(" ").length;
   let best = { score: 0, found: "" };
   for (const line of hay.split(/\n/)) {
     const toks = normName(line).split(" ").filter(Boolean);
-    for (let i = 0; i + words <= toks.length; i++) {
-      const cand = toks.slice(i, i + words).join(" ");
-      const s = similarity(target, cand);
-      if (s > best.score) best = { score: s, found: cand };
+    for (let n = Math.max(1, words - 1); n <= words + 1; n++) {
+      for (let i = 0; i + n <= toks.length; i++) {
+        const cand = toks.slice(i, i + n).join(" ");
+        const sc = Math.max(similarity(target, cand), similarity(targetTight, cand.replace(/ /g, "")));
+        if (sc > best.score) best = { score: sc, found: cand };
+      }
     }
   }
   return best;
@@ -231,9 +235,10 @@ export function bestNameMatch(needle: string, hay: string): { score: number; fou
 
 export function findPrintedDob(text: string): { dob?: string; yob?: string } {
   // Only a date explicitly labelled as birth date counts — e-Aadhaar also prints issue/download dates.
-  const m = text.match(/(?:DOB|D\.O\.B|Date of Birth|जन्म तिथि)\s*[:/-]?\s*(\d{2})[/.-](\d{2})[/.-](\d{4})/i);
+  // OCR often reads "DOB" as "D0B"/"DO8"; Hindi label may precede it
+  const m = text.match(/(?:D[O0Q][B8]|D\.O\.B\.?|Date\s*of\s*Birth|जन्म\s*तिथि)\s*[:/;.-]?\s*(\d{2})\s*[/.-]\s*(\d{2})\s*[/.-]\s*(\d{4})/i);
   if (m) return { dob: `${m[1]}-${m[2]}-${m[3]}`, yob: m[3] };
-  const y = text.match(/(?:Year of Birth|YOB|जन्म वर्ष)\s*[:/-]?\s*(\d{4})/i);
+  const y = text.match(/(?:Year\s*of\s*Birth|Y[O0]B|जन्म\s*वर्ष)\s*[:/;.-]?\s*(\d{4})/i);
   if (y) return { yob: y[1] };
   return {};
 }
@@ -257,5 +262,7 @@ export function findPrintedGender(text: string): string | undefined {
 }
 
 export function looksLikeAadhaar(text: string) {
-  return /aadhaar|aadhar|uidai|unique identification authority|आधार|enrolment\s*no|enrollment\s*no|mera aadhaar/i.test(text);
+  if (/aadhaar|aadhar|uidai|unique identification authority|आधार|enrolment\s*no|enrollment\s*no|mera aadhaar|government of india|\bVID\s*:/i.test(text)) return true;
+  // a 12-digit number printed in 4-4-4 groups next to a birth-date label
+  return findAadhaarNumbers(text).length > 0 && /D[O0Q][B8]|Date\s*of\s*Birth|Year\s*of\s*Birth/i.test(text);
 }

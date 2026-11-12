@@ -319,9 +319,15 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
   let aadhaar: AadhaarReport | null = null;
   if (docType === "aadhaar") {
     progress("Checking Aadhaar QR and number");
+    // OCR confidence for the words that make up a printed value (number groups, a date, a year)
     const confFor = (needle: string) => {
-      const groups = [needle.slice(0, 4), needle.slice(4, 8), needle.slice(8)];
-      const ws = ocrWords.filter((w) => groups.includes(w.str.replace(/\D/g, "")));
+      const digits = needle.replace(/\D/g, "");
+      if (!digits) return 0;
+      const parts = digits.length === 12 ? [digits.slice(0, 4), digits.slice(4, 8), digits.slice(8)] : [digits];
+      const ws = ocrWords.filter((w) => {
+        const d = w.str.replace(/\D/g, "");
+        return d.length >= 2 && parts.some((p) => p.includes(d) || d.includes(p));
+      });
       return ws.length ? Math.min(...ws.map((w) => w.confidence)) : 0;
     };
     // OCR sometimes "reads" the QR pattern as words — drop text that sits inside a QR code
@@ -396,7 +402,12 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
 
   // ── Fuse ──
   progress("Combining all checks");
-  const f = fuse(grid, layers, evidence, checks, { lowContent });
+  // ID cards: the verdict rests on deterministic checks. Can any run on this file?
+  const idCard = docType === "aadhaar";
+  const qrCompared = checks.some((c) => c.id === "aad-qr" && c.status !== "skip");
+  const digitChecked = checks.some((c) => c.id === "aad-verhoeff" && c.status !== "skip");
+  const idVerifiable = (docKind === "pdf" && !pdfA?.isScanned) || qrCompared || digitChecked;
+  const f = fuse(grid, layers, evidence, checks, { lowContent, idCard, idVerifiable });
   meta.inconsistencies = f.evidence.filter((e) => e.category === "metadata" && e.severity !== "pass" && e.severity !== "info").map((e) => e.title);
 
   const pageImageUrl = render.canvas.toDataURL("image/jpeg", 0.9);

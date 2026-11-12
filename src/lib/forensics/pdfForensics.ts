@@ -695,6 +695,7 @@ export async function analyzePdf(
     const prevEnds = structure.revisionEnds.slice(0, -1).filter((e) => e > 200 && e < bytes.length - 10);
     if (prevEnds.length) target = prevEnds[0]; // the oldest version = closest to the original
   }
+  let postSignatureUnchanged = false;
   if (target !== null) {
     progress("Recovering the earlier version hidden inside the file");
     try {
@@ -702,7 +703,29 @@ export async function analyzePdf(
       const old = await renderPdfPage(oldDoc, 1, ANALYSIS_WIDTH, true);
       const diff = diffRenders(old.render.canvas, final.render.canvas, grid);
       const { boxes: oldBoxes } = await extractTextBoxes(old);
-      const changes = diffText(oldBoxes, boxes);
+      let changes = diffText(oldBoxes, boxes);
+      // Signature boxes may be redrawn after signing (validity marks) — never count those as edits.
+      try {
+        const sigRects = (await final.page.getAnnotations())
+          .filter((a: { subtype?: string; fieldType?: string }) => a.subtype === "Widget" && a.fieldType === "Sig")
+          .map((a: { rect: number[] }) => {
+            const [x1, y1, x2, y2] = final.convertRect(a.rect);
+            return { x: Math.min(x1, x2) - 4, y: Math.min(y1, y2) - 4, w: Math.abs(x2 - x1) + 8, h: Math.abs(y2 - y1) + 8 };
+          });
+        if (sigRects.length) {
+          const inSig = (x: number, y: number) => sigRects.some((r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
+          for (let k = 0; k < diff.grid.data.length; k++) {
+            const cx = ((k % diff.grid.cols) + 0.5) * diff.grid.cellW, cy = (Math.floor(k / diff.grid.cols) + 0.5) * diff.grid.cellH;
+            if (diff.grid.data[k] > 0 && inSig(cx, cy)) {
+              diff.grid.data[k] = 0;
+              diff.changedCells--;
+            }
+          }
+          changes = changes.filter((c) => !inSig(c.x + c.w / 2, c.y + c.h / 2));
+        }
+      } catch {
+        /* annotations unavailable */
+      }
       const signedAt = lastSig && lastSig.signedEnd === target ? lastSig : undefined;
       if (diff.changedCells > 0 || changes.length > 0) {
         layers.push({
@@ -737,6 +760,7 @@ export async function analyzePdf(
           });
         }
       } else {
+        if (signedAt) postSignatureUnchanged = true;
         ev({
           category: "pdf-structure",
           severity: "info",
@@ -768,6 +792,13 @@ export async function analyzePdf(
         severity: "pass",
         title: "Digitally signed, nothing added after signing",
         detail: `Signature${sigLabel ? ` by ${sigLabel}` : ""} covers the whole file. (The signer's certificate isn't checked in this version.)`,
+      });
+    } else if (postSignatureUnchanged) {
+      ev({
+        category: "pdf-structure",
+        severity: "info",
+        title: "Validation data added after signing — page unchanged",
+        detail: `Something was appended after the digital signature${sigLabel ? ` (${sigLabel})` : ""}, but the page looks exactly like the signed version and its text is identical. Signing services often add certificate/timestamp data this way.`,
       });
     } else if (!evidence.some((e) => e.title === "Changed after it was signed")) {
       ev({
