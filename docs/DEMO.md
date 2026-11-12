@@ -4,7 +4,8 @@
 
 - `npm run dev` → open http://localhost:3000 (or the Vercel URL).
 - Open the **Issuer Registry** panel once and click **Clear registry** so the demo starts clean.
-- Optional: in the AI panel, download the LLM beforehand so the "On-device AI explanation" fills in.
+- In the AI panel, click **Download all models** before you start: about 60 s the first time, about 3 s after that because the models are cached. The verdict card then gets an on-device AI explanation, and "Read aloud" works.
+- Leave **TOOLS** (tool-calling) **off**. It runs long generations that can freeze the page; the normal chat answers in 3–5 s.
 - Everything below uses the **fictional sample files** on the home page — no real personal data.
 
 ## 1. The problem (30 s)

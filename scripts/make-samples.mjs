@@ -352,6 +352,9 @@ for (let i = 0; i < tintedClean.data.length; i += 4) {
 copyRect(photoEdit, tintedClean, srcCell.x, srcCell.y, cw, ch, tgt.x, tgt.y);
 writeJpeg(photoEdit, path.join(out, "marksheet-photo-edited.jpg"), 88);
 
+// genuine digital screenshot (tests that the QR's white margin etc. don't raise false alarms)
+writePng(clean, path.join(out, "marksheet-screenshot.png"));
+
 // digital screenshot forgery: slightly-off box + pasted digits sitting 3px low
 const shot = clone(clean);
 const bg = avgColor(clean, tgt.x + cw + 6, tgt.y, 10, ch);
@@ -367,6 +370,7 @@ const manifest = [
   { file: "marksheet-signed-then-edited.pdf", title: "Signed, then edited", kind: "PDF", expect: "Edited (changed after it was signed)" },
   { file: "marksheet-photo.jpg", title: "Photo of genuine marksheet", kind: "JPG", expect: "No signs of editing" },
   { file: "marksheet-photo-edited.jpg", title: "Photo: mark whited-out & pasted", kind: "JPG", expect: "Edited / suspicious area" },
+  { file: "marksheet-screenshot.png", title: "Screenshot of genuine marksheet", kind: "PNG", expect: "No signs of editing" },
   { file: "marksheet-screenshot-edited.png", title: "Screenshot: pasted digits", kind: "PNG", expect: "Edited / suspicious area" },
 ];
 fs.writeFileSync(path.join(out, "manifest.json"), JSON.stringify(manifest, null, 2));

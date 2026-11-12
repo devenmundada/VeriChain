@@ -5,11 +5,11 @@ import { Upload, Brain, Fingerprint, Link, Shield, CheckCircle2, Loader2 } from 
 import { useApp } from "../lib/AppContext";
 
 const steps = [
-  { key: "uploading", icon: Upload, label: "Upload", desc: "Your file is being read" },
-  { key: "analyzing", icon: Brain, label: "AI Analysis", desc: "Checking for tampering" },
-  { key: "hashing", icon: Fingerprint, label: "Fingerprint", desc: "Creating unique ID" },
-  { key: "minting", icon: Link, label: "Blockchain", desc: "Recording proof on-chain" },
-  { key: "complete", icon: Shield, label: "Certified", desc: "Verification complete!" },
+  { key: "uploading", icon: Upload, label: "Upload", short: "Upload", desc: "Your file is being read" },
+  { key: "analyzing", icon: Brain, label: "Tamper Check", short: "Check", desc: "Checking for tampering" },
+  { key: "hashing", icon: Fingerprint, label: "Fingerprint", short: "Hash", desc: "Creating unique ID" },
+  { key: "minting", icon: Link, label: "Proof", short: "Proof", desc: "Recording the proof" },
+  { key: "complete", icon: Shield, label: "Done", short: "Done", desc: "Analysis complete" },
 ] as const;
 
 const stageOrder = ["idle", "uploading", "analyzing", "hashing", "minting", "complete", "error"];
@@ -71,9 +71,10 @@ export default function PipelineStepper() {
                 </motion.div>
                 <div className="text-center">
                   <div className={`text-xs font-semibold ${isDone ? "text-[#39FF14]" : isActive ? "text-[#FFB800]" : "text-zinc-500"}`}>
-                    {step.label}
+                    <span className="hidden sm:inline">{step.label}</span>
+                    <span className="sm:hidden">{step.short}</span>
                   </div>
-                  <div className={`text-[10px] mt-0.5 ${isActive ? "text-zinc-400" : "text-zinc-600"}`}>
+                  <div className={`hidden sm:block text-[10px] mt-0.5 ${isActive ? "text-zinc-400" : "text-zinc-600"}`}>
                     {isActive ? step.desc : isDone ? "Done" : ""}
                   </div>
                 </div>

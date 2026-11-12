@@ -42,6 +42,12 @@
     "expect": "Edited / suspicious area"
   },
   {
+    "file": "marksheet-screenshot.png",
+    "title": "Screenshot of genuine marksheet",
+    "kind": "PNG",
+    "expect": "No signs of editing"
+  },
+  {
     "file": "marksheet-screenshot-edited.png",
     "title": "Screenshot: pasted digits",
     "kind": "PNG",

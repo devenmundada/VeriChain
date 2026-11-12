@@ -132,7 +132,7 @@ export default function AIForensicPanel() {
               <span className="text-[10px] font-mono font-bold text-[#9B59B6]">ON-DEVICE AI EXPLANATION</span>
               {fr.aiTokensPerSecond && (
                 <span className="text-[8px] font-mono text-zinc-600 ml-auto">
-                  {fr.aiTokensPerSecond.toFixed(1)} tok/s • {fr.aiLatencyMs}ms
+                  {fr.aiTokensPerSecond.toFixed(1)} tok/s • {((fr.aiLatencyMs ?? 0) / 1000).toFixed(1)}s
                 </span>
               )}
             </div>

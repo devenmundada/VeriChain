@@ -37,7 +37,9 @@ export default function VoicePipelinePanel() {
 
   const buildSystemPrompt = useCallback((): string => {
     if (state.forensicResult) {
-      return `Voice AI. 1 sentence. Score:${state.forensicResult.authenticityScore}% Risk:${state.forensicResult.forgeryRisk}`;
+      const fr = state.forensicResult;
+      const ch = fr.changes.slice(0, 2).map((c) => `${c.before} was changed to ${c.after}`).join("; ");
+      return `Voice assistant for document verification. Verdict: ${fr.verdictTitle}.${ch ? ` Changes: ${ch}.` : ""} Reply in 1 short sentence.`;
     }
     return "Voice AI. 1 sentence max.";
   }, [state.forensicResult]);
@@ -79,7 +81,7 @@ export default function VoicePipelinePanel() {
           await pipelineRef.current!.processTurn(
             segment.samples,
             {
-              maxTokens: 25,
+              maxTokens: 40,
               temperature: 0.0,
               systemPrompt: buildSystemPrompt(),
             },

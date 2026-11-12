@@ -162,7 +162,10 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
   const t0 = performance.now();
   const progress = (m: string) => opts.onProgress?.(m);
   const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.length === 0) return emptyResult(file, "Empty file", "This file is empty (0 bytes). Upload the actual PDF or photo.", t0);
   const docKind = sniff(bytes, file.type);
+  // QR codes sit on their own white "quiet zone" — exclude that margin from background/grain checks
+  const qrMargin = (q: QRHit) => ({ x: q.box.x - q.box.w * 0.25, y: q.box.y - q.box.h * 0.25, w: q.box.w * 1.5, h: q.box.h * 1.5 });
 
   const evidence: Evidence[] = [];
   const layers: TamperLayer[] = [];
@@ -205,7 +208,7 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
     progress("Checking page pixels");
     const pdfQr = await readQRCodes(render.canvas).catch(() => [] as QRHit[]);
     if (pdfQr.length) earlyQrs = pdfQr;
-    const px = await analyzePixels(render.canvas, grid, { isJpeg: false, fromRender: true, exclude: [...pdfA.imageRects, ...pdfQr.map((q) => q.box)] });
+    const px = await analyzePixels(render.canvas, grid, { isJpeg: false, fromRender: true, exclude: [...pdfA.imageRects, ...pdfQr.map(qrMargin)] });
     evidence.push(...px.evidence);
     layers.push(...px.layers);
     checks.push(...px.checks.filter((c) => c.id !== "px-ela"));
@@ -243,7 +246,7 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
     progress("Looking for QR codes");
     earlyQrs = await readQRCodesRobust(render.canvas).catch(() => [] as QRHit[]);
     progress("Comparing every area of the image with the rest");
-    const px = await analyzePixels(render.canvas, grid, { isJpeg: docKind === "jpeg", fromRender: false, exclude: earlyQrs.map((q) => q.box) });
+    const px = await analyzePixels(render.canvas, grid, { isJpeg: docKind === "jpeg", fromRender: false, exclude: earlyQrs.map(qrMargin) });
     evidence.push(...px.evidence);
     layers.push(...px.layers);
     checks.push(...px.checks);
@@ -374,9 +377,26 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
     checks.push({ id: "registry", label: "Registered original", status: "skip", note: "registry unavailable" });
   }
 
+  // ── Is there enough document here to judge? (tiny images, holiday photos, blank scans) ──
+  // count only confident, real words — OCR "reads" shapes in ordinary photos as garbage words
+  const realWords = ocrWords.filter((w) => w.confidence >= 70 && /[A-Za-z0-9]{3,}/.test(w.str)).length;
+  const lowContent =
+    docKind !== "pdf" || pdfA?.isScanned
+      ? Math.min(render.width, render.height) < 300 || (realWords < 8 && qrs.length === 0)
+      : textBoxes.length < 3 && qrs.length === 0;
+  if (lowContent) {
+    evidence.push({
+      id: "low-content",
+      category: "metadata",
+      severity: "info",
+      title: "Not enough document content",
+      detail: "Very little readable text was found (or the image is tiny), so most checks have nothing to compare. Upload a clear, complete PDF or photo of the document.",
+    });
+  }
+
   // ── Fuse ──
   progress("Combining all checks");
-  const f = fuse(grid, layers, evidence, checks);
+  const f = fuse(grid, layers, evidence, checks, { lowContent });
   meta.inconsistencies = f.evidence.filter((e) => e.category === "metadata" && e.severity !== "pass" && e.severity !== "info").map((e) => e.title);
 
   const pageImageUrl = render.canvas.toDataURL("image/jpeg", 0.9);
@@ -448,14 +468,18 @@ function emptyResult(file: File, title: string, summary: string, t0: number): Fo
   };
 }
 
-/** Short prompt for the on-device LLM to narrate the verdict (it explains; it doesn't decide). */
+/** Short, concrete prompt for the small on-device LLM — it explains the verdict, it doesn't decide it. */
 export function buildNarrationPrompt(r: ForensicResult): string {
+  const doc = r.docType === "unknown" ? "document" : r.docType;
+  const changes = r.changes.slice(0, 3).map((c) => `${c.before} was changed to ${c.after}`).join("; ");
   const top = r.evidence
     .filter((e) => e.severity === "critical" || e.severity === "warning")
-    .slice(0, 3)
-    .map((e) => `${e.title}${e.change ? ` (${e.change.before} -> ${e.change.after})` : ""}`)
+    .slice(0, 2)
+    .map((e) => e.title.toLowerCase())
     .join("; ");
-  return `Verdict: ${r.verdictTitle}. Document: ${r.docType}. Evidence: ${top || "none"}. Explain to a non-expert in 2 short sentences what this means and what to do next.`;
+  if (r.verdict === "NO_SIGNS" || r.verdict === "MATCHES_ORIGINAL")
+    return `The ${doc} passed all checks (${r.verdictTitle.toLowerCase()}). In 2 short sentences, tell the verifier it looks unedited and that only the issuer's original can fully prove it.`;
+  return `The ${doc} was flagged: ${r.verdictTitle}. ${changes ? `Changes: ${changes}.` : ""} Evidence: ${top || "none"}. In 2 short sentences, tell the verifier what was changed and to ask the issuer for the original.`;
 }
 
 export { getPdfJs };

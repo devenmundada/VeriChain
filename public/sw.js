@@ -51,6 +51,7 @@ self.addEventListener("fetch", (event) => {
 
   // Skip blockchain RPC calls — those need live data
   if (url.hostname.includes("polygon.technology")) return;
+  if (url.hostname.includes("publicnode.com") || url.hostname.includes("drpc.org")) return;
   if (url.hostname.includes("polygonscan.com")) return;
 
   // Navigation requests — network-first with cache fallback

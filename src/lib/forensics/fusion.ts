@@ -72,7 +72,8 @@ export function fuse(
   grid: TamperGrid,
   layers: TamperLayer[],
   evidenceIn: Evidence[],
-  checks: CheckRun[]
+  checks: CheckRun[],
+  opts: { lowContent?: boolean } = {}
 ): FusionResult {
   const fused = TamperGrid.like(grid);
   const C = fused.cols, R = fused.rows;
@@ -118,7 +119,19 @@ export function fuse(
     fused.data[k] = v;
   }
 
-  const evidence = [...evidenceIn];
+  // A background patch on its own is easily caused by logos, photos or QR margins — only a
+  // warning when another detector agrees on the same spot; otherwise just information.
+  const evidence = evidenceIn.map((e) => {
+    if (e.layerId !== "px-bg" || e.severity !== "warning" || !e.regions?.length) return e;
+    const others = gridLayers.filter((l) => l.id !== "px-bg");
+    const corroborated = e.regions.some((rg) => {
+      const c0 = Math.max(0, Math.floor((rg.x * fused.width) / fused.cellW) - 1), c1 = Math.min(C - 1, Math.ceil(((rg.x + rg.w) * fused.width) / fused.cellW) + 1);
+      const r0 = Math.max(0, Math.floor((rg.y * fused.height) / fused.cellH) - 1), r1 = Math.min(R - 1, Math.ceil(((rg.y + rg.h) * fused.height) / fused.cellH) + 1);
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (others.some((l) => l.grid![r * C + c] >= 0.5)) return true;
+      return false;
+    });
+    return corroborated ? e : { ...e, severity: "info" as const, title: "Possible background patch (one check only)" };
+  });
   // Agreement between independent pixel detectors
   const agreeGrid = TamperGrid.like(grid);
   for (let k = 0; k < fused.data.length; k++) if (agree[k]) agreeGrid.data[k] = 1;
@@ -153,7 +166,7 @@ export function fuse(
   } else if (warn.length) {
     verdict = "SUSPICIOUS";
     title = warn.length >= 3 ? "Likely edited" : "Suspicious — check the flagged areas";
-  } else if (ran < 3) {
+  } else if (ran < 3 || opts.lowContent) {
     verdict = "INCONCLUSIVE";
     title = "Not enough evidence to judge";
   } else {

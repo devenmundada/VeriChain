@@ -467,7 +467,7 @@ export async function generateWithTools(
 
   const result = await ToolCalling.generateWithTools(prompt, {
     autoExecute: true,
-    maxToolCalls: 2,
+    maxToolCalls: 1,
     temperature: options?.temperature ?? 0.0,
     maxTokens: options?.maxTokens ?? 30,
     systemPrompt: options?.systemPrompt,

@@ -27,7 +27,8 @@ export interface LedgerEvent {
 }
 
 // Polygon Amoy Testnet config
-const AMOY_RPC = "https://rpc-amoy.polygon.technology";
+// rpc-amoy.polygon.technology no longer resolves (checked 2026-11-12) — use public RPCs with CORS, in order.
+const AMOY_RPCS = ["https://polygon-amoy-bor-rpc.publicnode.com", "https://polygon-amoy.drpc.org"];
 const AMOY_CHAIN_ID = 80002;
 const EXPLORER_URL = "https://amoy.polygonscan.com/tx/";
 
@@ -36,12 +37,32 @@ const EXPLORER_URL = "https://amoy.polygonscan.com/tx/";
  */
 // One shared provider with a fixed network: no network-detection loop that retries forever
 // (and floods the console) when the RPC is unreachable, e.g. on flaky Wi-Fi or offline.
-let _provider: ethers.JsonRpcProvider | null = null;
-export function getProvider(): ethers.JsonRpcProvider {
-  if (!_provider) {
-    _provider = new ethers.JsonRpcProvider(AMOY_RPC, AMOY_CHAIN_ID, { staticNetwork: true, batchMaxCount: 1 });
+const _providers: ethers.JsonRpcProvider[] = [];
+let _active = 0;
+export function getProvider(index = _active): ethers.JsonRpcProvider {
+  if (!_providers[index]) {
+    _providers[index] = new ethers.JsonRpcProvider(AMOY_RPCS[index], AMOY_CHAIN_ID, { staticNetwork: true, batchMaxCount: 1 });
   }
-  return _provider;
+  return _providers[index];
+}
+
+/** Run a read call on the first RPC that answers; remember which one worked. */
+async function withProvider<T>(fn: (p: ethers.JsonRpcProvider) => Promise<T>): Promise<T> {
+  let lastErr: unknown;
+  for (let k = 0; k < AMOY_RPCS.length; k++) {
+    const idx = (_active + k) % AMOY_RPCS.length;
+    try {
+      const res = await Promise.race([
+        fn(getProvider(idx)),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("RPC timeout")), 6000)),
+      ]);
+      _active = idx;
+      return res;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -60,12 +81,11 @@ export async function getNetworkStats() {
     };
   }
   try {
-    const provider = getProvider();
     const start = Date.now();
-    const blockNumber = await provider.getBlockNumber();
+    const blockNumber = await withProvider((p) => p.getBlockNumber());
     const latency = Date.now() - start;
 
-    const feeData = await provider.getFeeData();
+    const feeData = await withProvider((p) => p.getFeeData());
 
     return {
       rpcLatency: latency,
@@ -195,7 +215,7 @@ export async function mintProof(
             chainId: `0x${AMOY_CHAIN_ID.toString(16)}`,
             chainName: "Polygon Amoy Testnet",
             nativeCurrency: { name: "MATIC", symbol: "MATIC", decimals: 18 },
-            rpcUrls: [AMOY_RPC],
+            rpcUrls: AMOY_RPCS,
             blockExplorerUrls: ["https://amoy.polygonscan.com/"],
           },
         ]);
@@ -259,10 +279,9 @@ export async function mintProof(
 
       await delay(800);
 
-      const provider = getProvider();
       let blockHeight = 0;
       try {
-        blockHeight = await provider.getBlockNumber();
+        blockHeight = await withProvider((p) => p.getBlockNumber());
       } catch {
         blockHeight = 0; // RPC unreachable — don't invent a block number
       }

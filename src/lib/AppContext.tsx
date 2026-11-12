@@ -116,7 +116,16 @@ function reducer(state: AppState, action: Action): AppState {
     case "HASH_COMPLETE":
       return { ...state, hashResult: action.result };
     case "LEDGER_EVENT":
-      return { ...state, ledgerEvents: [...state.ledgerEvents, action.event] };
+      // a newer step means the earlier "pending" steps have finished
+      return {
+        ...state,
+        ledgerEvents: [
+          ...state.ledgerEvents.map((e) =>
+            (e.status === "pending" || e.status === "broadcasting") && action.event.status !== "failed" ? { ...e, status: "confirmed" as const } : e
+          ),
+          action.event,
+        ],
+      };
     case "BLOCKCHAIN_COMPLETE":
       return {
         ...state,
@@ -271,16 +280,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         let latency: number | null = null;
         generateWithLLM(
           buildNarrationPrompt(fr),
-          { maxTokens: 60, temperature: 0, systemPrompt: "You explain document forensics results in plain, simple words." },
+          { maxTokens: 70, temperature: 0, systemPrompt: "You help people verify documents. Use plain, simple words. Do not invent facts." },
           { onComplete: (_t, m) => { tps = m.tokensPerSecond; latency = m.latencyMs; } }
         )
           .then((text) => { if (text) dispatch({ type: "AI_NARRATION", text, tokensPerSecond: tps, latencyMs: latency }); })
           .catch(() => {});
       }
     } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      const friendly = /Invalid PDF|InvalidPDF|bad XRef|Invalid XRef|PDF header/i.test(raw)
+        ? "This PDF is damaged or isn't a real PDF file. Try downloading it again from the issuer."
+        : /decode|source image|InvalidStateError|EncodingError/i.test(raw)
+        ? "This image couldn't be opened. Use a JPG or PNG, or take a new photo."
+        : raw;
       dispatch({
         type: "SET_ERROR",
-        error: `Analysis failed: ${err instanceof Error ? err.message : "Unknown"}`,
+        error: `Analysis failed: ${friendly}`,
       });
       return;
     }

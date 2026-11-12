@@ -191,8 +191,8 @@ export default function HeroUpload() {
             exit={{ opacity: 0 }}
             className="glass-card max-w-2xl mx-auto"
           >
-            <div className="p-4 flex items-center justify-between border-b border-[#1E1E22]">
-              <div className="flex items-center gap-3">
+            <div className="p-4 flex items-center justify-between gap-2 border-b border-[#1E1E22]">
+              <div className="flex items-center gap-3 min-w-0">
                 {state.filePreviewUrl ? (
                   <div className="w-10 h-10 bg-[#0D0D0F] border border-[#1E1E22] overflow-hidden flex items-center justify-center">
                     <img src={state.filePreviewUrl} alt="" className="w-full h-full object-cover" />
@@ -203,18 +203,18 @@ export default function HeroUpload() {
                   </div>
                 )}
                 <div>
-                  <p className="text-sm text-zinc-200 truncate max-w-[300px]">{state.file?.name}</p>
-                  <p className="text-[11px] text-zinc-600">
+                  <p className="text-sm text-zinc-200 truncate max-w-[130px] sm:max-w-[300px]">{state.file?.name}</p>
+                  <p className="text-[11px] text-zinc-600 truncate max-w-[130px] sm:max-w-none">
                     {state.file ? `${(state.file.size / 1024).toFixed(1)} KB` : ""}
                     {state.documentId && <span className="ml-2 text-zinc-700">ID: {state.documentId}</span>}
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 {isProcessing && (
                   <div className="flex items-center gap-2">
                     <FileSearch className="w-4 h-4 text-[#FFB800] animate-pulse" />
-                    <span className="text-xs text-[#FFB800] max-w-[220px] truncate">{state.progressMessage ?? "Processing..."}</span>
+                    <span className="text-xs text-[#FFB800] max-w-[90px] sm:max-w-[220px] truncate">{state.progressMessage ?? "Processing..."}</span>
                   </div>
                 )}
                 {canReset && (

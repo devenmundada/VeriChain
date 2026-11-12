@@ -178,7 +178,8 @@ export default function AIAssistantPanel() {
   const buildContext = useCallback((): string => {
     if (state.forensicResult) {
       const fr = state.forensicResult;
-      return `Doc verification AI. 1 sentence max. Verdict:${fr.verdictTitle}. ${fr.changes.length ? `Changed:${fr.changes.slice(0, 3).map((c) => `${c.before}->${c.after}`).join(",")}` : ""}`;
+      const ch = fr.changes.slice(0, 3).map((c) => `${c.before} was changed to ${c.after}`).join("; ");
+      return `You help people verify documents. Verdict for this ${fr.docType === "unknown" ? "document" : fr.docType}: ${fr.verdictTitle}.${ch ? ` Changes found: ${ch}.` : ""} Answer in 1-2 short, plain sentences. Do not invent facts.`;
     }
     return "Doc verification AI. 1 sentence max.";
   }, [state]);
@@ -240,11 +241,21 @@ export default function AIAssistantPanel() {
         if (useToolCalling && state.forensicResult) {
           try {
             const toolResult = await generateWithTools(text, {
-              systemPrompt: "Forensic AI. 1 sentence max.",
-              maxTokens: 30,
+              systemPrompt: "Forensic AI. Call get_forensic_report with no arguments, then answer in 1 sentence.",
+              // short on purpose: the LLM runs on the main thread, long tool loops freeze the page
+              maxTokens: 48,
               temperature: 0.0,
             });
             finalText = toolResult.text;
+            // A tiny model sometimes leaves a half-written tool call in its text. Never show raw markup:
+            // answer from the tool's own data instead.
+            if (/<tool_call>|"tool"\s*:/.test(finalText) || !finalText.trim()) {
+              const fr = state.forensicResult;
+              const tried = /get_forensic_report/.test(finalText) || toolResult.toolCalls.some((tc) => tc.toolName === "get_forensic_report");
+              finalText = fr
+                ? `${tried ? "get_forensic_report → " : ""}${fr.verdictTitle}. ${fr.summary}`
+                : "No document has been analysed yet.";
+            }
             const assistantMsg: Message = {
               id: `assistant-${Date.now()}`,
               role: "assistant",
@@ -272,8 +283,9 @@ export default function AIAssistantPanel() {
               setTimeout(() => setIsSpeaking(false), finalText.length * 60);
             }
             return;
-          } catch {
-            // Fall through to regular generation
+          } catch (err) {
+            // Fall through to regular generation (the answer still uses the analysis result as context)
+            console.warn("[VeriChain] tool-calling generation failed, using plain generation:", err);
           }
         }
 
@@ -313,7 +325,7 @@ export default function AIAssistantPanel() {
           },
         };
 
-        await generateWithLLM(text, { systemPrompt, maxTokens: 30, temperature: 0.0 }, callbacks);
+        await generateWithLLM(text, { systemPrompt, maxTokens: 50, temperature: 0.0 }, callbacks);
 
         // If callbacks didn't fire (no streaming), use the return value
         if (!finalText) {

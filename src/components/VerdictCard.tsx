@@ -77,7 +77,7 @@ export default function VerdictCard() {
                 />
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-2xl font-bold font-mono" style={{ color: v.color }}>{Math.round(score)}</span>
+                <span className="text-2xl font-bold font-mono" style={{ color: v.color }}>{fr.verdict === "INCONCLUSIVE" ? "—" : Math.round(score)}</span>
                 <span className="text-[8px] font-mono text-zinc-600 tracking-widest">INTEGRITY</span>
               </div>
             </div>
