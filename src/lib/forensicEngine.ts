@@ -139,6 +139,23 @@ async function fileToCanvas(file: Blob): Promise<HTMLCanvasElement> {
   return canvas;
 }
 
+/** Copy of the page with QR codes blanked out: on ID cards the QR sits beside the printed details,
+ *  and OCR otherwise blends its pattern into those text lines. */
+function withoutQr(canvas: HTMLCanvasElement, qrs: { box: { x: number; y: number; w: number; h: number } }[]): HTMLCanvasElement {
+  if (!qrs.length) return canvas;
+  const c = document.createElement("canvas");
+  c.width = canvas.width;
+  c.height = canvas.height;
+  const ctx = c.getContext("2d", { willReadFrequently: true })!;
+  ctx.drawImage(canvas, 0, 0);
+  ctx.fillStyle = "#ffffff";
+  for (const q of qrs) {
+    const m = Math.max(q.box.w, q.box.h) * 0.12;
+    ctx.fillRect(q.box.x - m, q.box.y - m, q.box.w + 2 * m, q.box.h + 2 * m);
+  }
+  return c;
+}
+
 function evidenceToDetection(e: Evidence): Detection {
   const type: Detection["type"] =
     e.category === "metadata" ? "metadata" : e.category === "pdf-font" || e.category === "glyph" ? "font" : e.category === "pixel" ? "pixel" : "artifact";
@@ -217,7 +234,7 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
     if (pdfA.isScanned) {
       progress("Reading scanned page (on-device OCR)");
       try {
-        const o = await runOcr(render.canvas);
+        const o = await runOcr(withoutQr(render.canvas, pdfQr));
         ocrWords = o.words;
         textBoxes = o.words;
         docText = o.text;
@@ -255,7 +272,7 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
     photoLike = px.photoLike;
     progress("Reading text (on-device OCR)");
     try {
-      const o = await runOcr(render.canvas);
+      const o = await runOcr(withoutQr(render.canvas, earlyQrs ?? []));
       ocrWords = o.words;
       textBoxes = o.words;
       docText = o.text;
@@ -407,7 +424,22 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
   const qrCompared = checks.some((c) => c.id === "aad-qr" && c.status !== "skip");
   const digitChecked = checks.some((c) => c.id === "aad-verhoeff" && c.status !== "skip");
   const idVerifiable = (docKind === "pdf" && !pdfA?.isScanned) || qrCompared || digitChecked;
-  const f = fuse(grid, layers, evidence, checks, { lowContent, idCard, idVerifiable });
+  // Identity-field mask: cells around the name, DOB, gender and number (and where a missing
+  // field should be). Pixel evidence there counts even on an ID card.
+  let idMask: Uint8Array | undefined;
+  if (idCard) {
+    idMask = new Uint8Array(grid.data.length);
+    const nameTokens = (aadhaar?.qr?.name ?? "").toUpperCase().split(/\s+/).filter((t) => t.length >= 3);
+    const isIdField = (b: TextBox) => {
+      const t = b.str.toUpperCase();
+      return /\d{2,}/.test(t) || /\b(FE)?MALE\b|TRANSGENDER|D[O0][B8]|BIRTH/.test(t) || nameTokens.some((n) => t.includes(n));
+    };
+    const m = TamperGrid.like(grid);
+    for (const b of textBoxes) if (isIdField(b)) m.markRect(b.x - grid.cellW, b.y - grid.cellH, b.w + 2 * grid.cellW, b.h + 2 * grid.cellH, 1);
+    for (const e of evidence) if (e.category === "aadhaar" && e.severity === "critical") for (const r of e.regions ?? []) if (r.label !== "signed QR") m.markRect(r.x * render.width, r.y * render.height, r.w * render.width, r.h * render.height, 1);
+    for (let k = 0; k < m.data.length; k++) idMask[k] = m.data[k] > 0 ? 1 : 0;
+  }
+  const f = fuse(grid, layers, evidence, checks, { lowContent, idCard, idVerifiable, idMask });
   meta.inconsistencies = f.evidence.filter((e) => e.category === "metadata" && e.severity !== "pass" && e.severity !== "info").map((e) => e.title);
 
   const pageImageUrl = render.canvas.toDataURL("image/jpeg", 0.9);

@@ -15,6 +15,10 @@ import {
 } from "./aadhaar";
 import type { CheckRun, Evidence, Region, TextBox } from "./types";
 
+function normText(s: string) {
+  return s.toUpperCase().replace(/\s+/g, " ");
+}
+
 export interface AadhaarReport {
   qr: AadhaarQR | null;
   printedNumbers: string[];
@@ -237,8 +241,65 @@ export async function runAadhaarChecks(
         change: { before: `${qg} (QR)`, after: `${pg} (printed)`, field: "Gender" },
       });
     }
-    report.qrMatches = compared > 0 && mismatches.length === 0;
-    if (!mismatches.length && compared > 0) {
+    // ── Fields the signed QR says must be printed, but aren't (erased / cropped out) ──
+    // Every Aadhaar prints the holder's name, date (or year) of birth, gender and number.
+    const missing: string[] = [];
+    if (printedReadable) {
+      const nameScore = qr.name ? bestNameMatch(qr.name, docText).score : 0;
+      // the rest of the card was read well → a missing field is real, not an OCR miss
+      const readWell = source === "pdf" || (nameScore >= 0.85 && (printedNumbers.length > 0 || maskedLast4.length > 0 || !!pg));
+      const qd = qr.dob?.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+      const dateAnywhere = qd ? new RegExp(`${qd[1]}\\s*[/.-]\\s*${qd[2]}\\s*[/.-]\\s*${qd[3]}`).test(docText) : false;
+      const yearAnywhere = qr.yob ? new RegExp(`(?:Birth|B|YOB)\\D{0,12}${qr.yob}`, "i").test(docText) : false;
+      const dobPresent = !!(pd.dob || pd.yob) || dateAnywhere || yearAnywhere;
+      const expectRegion = (): Region[] => {
+        // between the name line and the gender/number line — where Aadhaar prints the DOB
+        const nb = qr.name ? boxes.find((b) => normText(b.str).includes(qr.name!.split(" ")[0].toUpperCase())) : undefined;
+        const gb = boxes.find((b) => /\b(FE)?MALE\b|TRANSGENDER/i.test(b.str));
+        if (!nb || !gb || gb.y <= nb.y) return [];
+        const x = Math.min(nb.x, gb.x), y = nb.y + nb.h, w = Math.max(nb.w, gb.w) * 2.2, h = Math.max(4, gb.y - (nb.y + nb.h));
+        return [{ x: x / pageW, y: y / pageH, w: Math.min(w, pageW - x) / pageW, h: h / pageH, label: "DOB missing here" }];
+      };
+      if ((qr.dob || qr.yob) && !dobPresent) {
+        missing.push("dob");
+        ev({
+          category: "aadhaar",
+          severity: readWell ? "critical" : "warning",
+          title: "Date of birth missing from the card",
+          detail: readWell
+            ? `The signed QR holds a date of birth (${qr.dob ?? qr.yob}), but no date or year of birth is printed on the card. Every Aadhaar prints it — it was removed or covered.`
+            : `The QR holds a date of birth (${qr.dob ?? qr.yob}) but none could be read from the image. Check the card by eye: if it's really missing, the card was edited.`,
+          regions: [...expectRegion(), ...qrRegion],
+          layerId: "aadhaar",
+          change: { before: `${qr.dob ?? qr.yob} (QR)`, after: "(missing)", field: "Date of birth" },
+        });
+      }
+      if (qg0(qr.gender) && !pg) {
+        missing.push("gender");
+        ev({
+          category: "aadhaar",
+          severity: source === "pdf" ? "critical" : "warning",
+          title: "Gender missing from the card",
+          detail: `The QR records the gender, but it isn't printed (or couldn't be read). Every Aadhaar prints it.`,
+          regions: qrRegion,
+          layerId: "aadhaar",
+        });
+      }
+      if (qr.last4 && !printedNumbers.length && !maskedLast4.length) {
+        missing.push("number");
+        ev({
+          category: "aadhaar",
+          severity: source === "pdf" ? "critical" : "warning",
+          title: "Aadhaar number missing from the card",
+          detail: `The QR belongs to a number ending in ${qr.last4}, but no Aadhaar number (full or masked) is printed or readable.`,
+          regions: qrRegion,
+          layerId: "aadhaar",
+        });
+      }
+    }
+
+    report.qrMatches = compared > 0 && mismatches.length === 0 && missing.length === 0;
+    if (!mismatches.length && !missing.length && compared > 0) {
       ev({
         category: "aadhaar",
         severity: "pass",
@@ -249,8 +310,8 @@ export async function runAadhaarChecks(
     checks.push({
       id: "aad-qr",
       label: "Aadhaar QR vs printed text",
-      status: mismatches.length ? "flag" : compared ? "pass" : "skip",
-      note: compared ? `${compared} field(s) compared` : "QR read; printed text not readable",
+      status: mismatches.length || missing.length ? "flag" : compared ? "pass" : "skip",
+      note: compared ? `${compared} field(s) compared${missing.length ? `, ${missing.length} missing` : ""}` : "QR read; printed text not readable",
     });
   } else {
     ev({

@@ -73,14 +73,22 @@ export function fuse(
   layers: TamperLayer[],
   evidenceIn: Evidence[],
   checks: CheckRun[],
-  opts: { lowContent?: boolean; idCard?: boolean; idVerifiable?: boolean } = {}
+  opts: { lowContent?: boolean; idCard?: boolean; idVerifiable?: boolean; idMask?: Uint8Array } = {}
 ): FusionResult {
   const fused = TamperGrid.like(grid);
   const C = fused.cols, R = fused.rows;
   // ID cards (Aadhaar) have photos, emblems, colour bands, Hindi and bold fonts that trip pixel/font
-  // statistics. For them the verdict and heatmap use only deterministic checks.
+  // statistics. There, statistical findings only count on the identity fields (name, DOB, gender,
+  // number — idMask); elsewhere they're shown for information only.
   const STATISTICAL = new Set(["px-noise", "px-ela", "px-bg", "glyph", "pdf-font"]);
-  const gridLayers = layers.filter((l) => l.grid && !(opts.idCard && STATISTICAL.has(l.id)));
+  const mask = opts.idCard ? opts.idMask : undefined;
+  const gridLayers = layers
+    .filter((l) => l.grid)
+    .map((l) =>
+      opts.idCard && STATISTICAL.has(l.id)
+        ? { ...l, grid: mask ? l.grid!.map((v, k) => (mask[k] ? v : 0)) : new Float32Array(l.grid!.length) }
+        : l
+    );
   const agree = new Uint8Array(fused.data.length);
 
   for (let k = 0; k < fused.data.length; k++) {
@@ -150,8 +158,16 @@ export function fuse(
 
   const idInfo =
     "Shown for information only: ID cards have photos, emblems and colour bands that trip pixel and font statistics, so the verdict uses the QR, check digit and file structure instead. ";
+  const onIdField = (e: Evidence) =>
+    !!mask &&
+    (e.regions ?? []).some((rg) => {
+      const c0 = Math.max(0, Math.floor((rg.x * fused.width) / fused.cellW)), c1 = Math.min(C - 1, Math.floor(((rg.x + rg.w) * fused.width) / fused.cellW));
+      const r0 = Math.max(0, Math.floor((rg.y * fused.height) / fused.cellH)), r1 = Math.min(R - 1, Math.floor(((rg.y + rg.h) * fused.height) / fused.cellH));
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (mask[r * C + c]) return true;
+      return false;
+    });
   const ev = dedupe(evidence).map((e) =>
-    opts.idCard && (e.severity === "warning" || e.severity === "critical") && (e.category === "pixel" || e.category === "glyph" || e.category === "pdf-font")
+    opts.idCard && (e.severity === "warning" || e.severity === "critical") && (e.category === "pixel" || e.category === "glyph" || e.category === "pdf-font") && !onIdField(e)
       ? { ...e, severity: "info" as const, detail: idInfo + e.detail }
       : e
   );
