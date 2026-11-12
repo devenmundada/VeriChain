@@ -32,6 +32,23 @@ VeriChain solves all of these by running AI **directly in the browser** via WebA
 | **Works Offline** | PWA with service worker — works without internet after model download |
 | **Blockchain Proof** | Cryptographic hash anchored on Polygon for tamper-proof verification |
 
+## Tamper Map — Find Edits Without the Original
+
+Most verifiers never have the original document. VeriChain compares the upload with **four other references**, all on-device:
+
+| Reference | Checks | Example catch |
+|---|---|---|
+| **The document vs itself** | Grain/noise map, background micro-steps, edge-normalised ELA (JPEG), every number vs its own row (ink, sharpness, size, baseline) | Whited-out mark with pasted digits in a photo |
+| **Older versions hidden in the file** | PDF incremental saves recovered and diffed, text hidden under white boxes, text drawn over text, editor annotations, duplicate font subsets, EXIF preview vs image | "88 → 98, 436 → 446" recovered from inside an edited PDF |
+| **Signed data printed on it** | Aadhaar Secure QR (UIDAI-signed name, DOB, gender, last 4 digits) vs printed text; PDF signature changed after signing | Edited date of birth on an Aadhaar card |
+| **The document's own rules** | Aadhaar Verhoeff check digit; marksheet column sums vs Total, obtained ≤ max, percentage | Changed mark when the total wasn't updated |
+
+Every detector writes onto one shared grid (the spatial hash map). A region turns red only when a deterministic check fires or **two independent checks agree**, which keeps false alarms down. The verdict is **Edited / Suspicious / No signs of editing / Matches registered original**, with a "what was changed" list (for example `45 → 85`) and a layered heatmap.
+
+**With the original:** an issuer registers a genuine file on-device; any later copy is compared cell by cell, and a **spatial Merkle root** (one leaf per grid row) is what gets anchored on Polygon.
+
+Try it: the home page has six fictional sample files (genuine and edited marksheets as PDF/JPG/PNG). See [docs/DEMO.md](docs/DEMO.md).
+
 ## RunAnywhere SDK Integration — Complete Feature Coverage
 
 VeriChain uses **every major feature** of the RunAnywhere Web SDK:

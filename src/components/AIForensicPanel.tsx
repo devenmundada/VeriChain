@@ -1,81 +1,39 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Brain, ShieldCheck, AlertTriangle, Activity } from "lucide-react";
+import { Brain, CheckCircle2, AlertTriangle, MinusCircle, Activity, IdCard, GraduationCap, ListChecks } from "lucide-react";
 import { useApp } from "../lib/AppContext";
 
-function getRiskColor(risk: string) {
-  switch (risk) {
-    case "LOW": return { color: "#39FF14", bg: "rgba(57,255,20,0.1)", label: "Low Risk" };
-    case "MEDIUM": return { color: "#FFB800", bg: "rgba(255,184,0,0.1)", label: "Medium Risk" };
-    case "HIGH": return { color: "#FF6B35", bg: "rgba(255,107,53,0.1)", label: "High Risk" };
-    case "CRITICAL": return { color: "#FF3131", bg: "rgba(255,49,49,0.1)", label: "Critical" };
-    default: return { color: "#39FF14", bg: "rgba(57,255,20,0.1)", label: "Low Risk" };
-  }
-}
+const STATUS = {
+  pass: { icon: CheckCircle2, color: "#39FF14", label: "passed" },
+  flag: { icon: AlertTriangle, color: "#FF3131", label: "flagged" },
+  skip: { icon: MinusCircle, color: "#52525B", label: "not applicable" },
+} as const;
 
-function CircularGauge({ value, label, sublabel, color }: { value: number; label: string; sublabel: string; color: string }) {
-  const radius = 40;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (value / 100) * circumference;
-
+function Row({ label, qr, printed }: { label: string; qr?: string; printed?: string }) {
+  const both = qr && printed;
+  const same = both && qr.toUpperCase().replace(/\s+/g, " ").trim() === printed.toUpperCase().replace(/\s+/g, " ").trim();
+  const color = !both ? "#71717A" : same ? "#39FF14" : "#FF3131";
   return (
-    <div className="flex flex-col items-center gap-2">
-      <div className="relative w-[100px] h-[100px]">
-        <svg className="w-full h-full -rotate-90" viewBox="0 0 90 90">
-          <circle cx="45" cy="45" r={radius} fill="none" stroke="#1E1E22" strokeWidth="4" />
-          <motion.circle
-            cx="45" cy="45" r={radius} fill="none" stroke={color} strokeWidth="4"
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            initial={{ strokeDashoffset: circumference }}
-            animate={{ strokeDashoffset: offset }}
-            transition={{ duration: 2, ease: "easeOut", delay: 0.3 }}
-            style={{ filter: `drop-shadow(0 0 6px ${color}60)` }}
-          />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
-          <motion.span
-            className="text-xl font-bold"
-            style={{ color }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.8 }}
-          >
-            {value}%
-          </motion.span>
-        </div>
-      </div>
-      <div className="text-center">
-        <div className="text-xs font-semibold text-zinc-300">{label}</div>
-        <div className="text-[10px] text-zinc-600">{sublabel}</div>
-      </div>
-    </div>
+    <tr className="border-b border-[#1E1E22] last:border-0">
+      <td className="py-1.5 pr-2 text-zinc-500">{label}</td>
+      <td className="py-1.5 pr-2 text-zinc-300 font-mono">{qr ?? "—"}</td>
+      <td className="py-1.5 pr-2 font-mono" style={{ color }}>{printed ?? "—"}</td>
+    </tr>
   );
 }
 
 export default function AIForensicPanel() {
   const { state } = useApp();
   const isAnalyzing = state.stage === "analyzing";
-  const hasData = !!state.forensicResult;
-
-  const score = state.forensicResult?.authenticityScore ?? 0;
-  const confidence = state.forensicResult?.aiConfidence ?? 0;
-  const risk = state.forensicResult?.forgeryRisk ?? "LOW";
-  const riskStyle = getRiskColor(risk);
-  const ps = state.forensicResult?.pixelStats;
+  const fr = state.forensicResult;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6, delay: 0.2 }}
-      className="glass-card"
-    >
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.2 }} className="glass-card">
       <div className="flex items-center justify-between p-4 border-b border-[#1E1E22]">
         <div className="flex items-center gap-2">
-          <Brain className="w-4 h-4 text-[#39FF14]" />
-          <span className="text-sm font-semibold text-zinc-300">AI Analysis</span>
+          <ListChecks className="w-4 h-4 text-[#39FF14]" />
+          <span className="text-sm font-semibold text-zinc-300">Checks Run On-Device</span>
         </div>
         {isAnalyzing && (
           <motion.div animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.5, repeat: Infinity }} className="flex items-center gap-1.5">
@@ -85,89 +43,108 @@ export default function AIForensicPanel() {
         )}
       </div>
 
-      {hasData ? (
-        <div className="p-5">
-          {/* Gauges */}
-          <div className="flex items-center justify-around mb-5">
-            <CircularGauge
-              value={score}
-              label="Authenticity Score"
-              sublabel="How genuine the document appears"
-              color={score >= 80 ? "#39FF14" : score >= 60 ? "#FFB800" : "#FF3131"}
-            />
-            <CircularGauge
-              value={confidence}
-              label="AI Confidence"
-              sublabel="How certain the analysis is"
-              color="#00B4D8"
-            />
-          </div>
-
-          {/* Risk badge */}
-          <div className="flex items-center justify-between p-3 border rounded-sm" style={{ borderColor: riskStyle.color + "30", background: riskStyle.bg }}>
-            <div className="flex items-center gap-2">
-              {risk === "LOW" ? (
-                <ShieldCheck className="w-5 h-5" style={{ color: riskStyle.color }} />
-              ) : (
-                <AlertTriangle className="w-5 h-5" style={{ color: riskStyle.color }} />
-              )}
-              <span className="text-sm text-zinc-300">Tampering Risk</span>
-            </div>
-            <span className="text-sm font-bold" style={{ color: riskStyle.color }}>{riskStyle.label}</span>
-          </div>
-
-          {/* Pixel stats — human readable */}
-          {ps && (
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              {[
-                { label: "Image Complexity", value: ps.entropy.toFixed(1), desc: ps.entropy > 6.5 ? "Normal" : ps.entropy > 4 ? "Moderate" : "Synthetic-looking" },
-                { label: "Noise Level", value: ps.noiseLevel.toFixed(0), desc: ps.noiseLevel < 20 ? "Clean" : ps.noiseLevel < 40 ? "Some noise" : "Heavy editing" },
-                { label: "Color Spread", value: ps.stdDev.toFixed(0), desc: ps.stdDev > 60 ? "Rich detail" : ps.stdDev > 30 ? "Normal" : "Flat/uniform" },
-              ].map((stat) => (
-                <div key={stat.label} className="text-center p-2 bg-[#0D0D0F] border border-[#1E1E22] rounded-sm">
-                  <div className="text-[10px] text-zinc-600 mb-1">{stat.label}</div>
-                  <div className="text-sm font-semibold text-zinc-300">{stat.value}</div>
-                  <div className="text-[9px] text-zinc-600">{stat.desc}</div>
+      {fr ? (
+        <div className="p-5 space-y-5">
+          {/* Checks */}
+          <div className="grid grid-cols-1 gap-1">
+            {fr.checks.map((c) => {
+              const s = STATUS[c.status];
+              const Icon = s.icon;
+              return (
+                <div key={c.id + c.label} className="flex items-center gap-2 text-[11px] py-1 border-b border-[#1E1E22]/60 last:border-0">
+                  <Icon className="w-3.5 h-3.5 shrink-0" style={{ color: s.color }} />
+                  <span className={c.status === "skip" ? "text-zinc-600" : "text-zinc-300"}>{c.label}</span>
+                  <span className="ml-auto text-zinc-600 font-mono text-[10px] text-right truncate max-w-[55%]">{c.note ?? s.label}</span>
                 </div>
-              ))}
+              );
+            })}
+          </div>
+
+          {/* Aadhaar QR vs printed */}
+          {fr.aadhaar && (
+            <div className="p-3 bg-[#0D0D0F] border border-[#1E1E22]">
+              <div className="flex items-center gap-2 mb-2">
+                <IdCard className="w-3.5 h-3.5 text-[#00B4D8]" />
+                <span className="text-[10px] font-mono font-bold text-[#00B4D8] tracking-wider">AADHAAR — SIGNED QR vs PRINTED</span>
+              </div>
+              {fr.aadhaar.qr ? (
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-[9px] text-zinc-600 uppercase tracking-wider">
+                      <th className="text-left font-normal pb-1">Field</th>
+                      <th className="text-left font-normal pb-1">QR ({fr.aadhaar.qr.kind === "secure" ? "signed" : "unsigned"})</th>
+                      <th className="text-left font-normal pb-1">Printed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <Row label="Name" qr={fr.aadhaar.qr.name} printed={fr.aadhaar.printedName} />
+                    <Row label="DOB" qr={fr.aadhaar.qr.dob ?? fr.aadhaar.qr.yob} printed={fr.aadhaar.printedDob ?? fr.aadhaar.printedYob} />
+                    <Row label="Gender" qr={fr.aadhaar.qr.gender?.[0]} printed={fr.aadhaar.printedGender} />
+                    <Row
+                      label="Last 4"
+                      qr={fr.aadhaar.qr.last4}
+                      printed={fr.aadhaar.printedNumbers[0]?.slice(-4) ?? fr.aadhaar.maskedLast4[0]}
+                    />
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-[11px] text-zinc-500">QR not readable — upload the e-Aadhaar PDF or a sharper photo.</p>
+              )}
+              {fr.aadhaar.numberValid !== undefined && (
+                <p className="text-[11px] mt-2" style={{ color: fr.aadhaar.numberValid ? "#39FF14" : "#FF3131" }}>
+                  Check digit (Verhoeff): {fr.aadhaar.numberValid ? "valid" : "INVALID"} — {fr.aadhaar.printedNumbers.join(", ")}
+                </p>
+              )}
             </div>
           )}
 
-          {/* On-Device AI Analysis */}
-          {state.forensicResult?.aiAnalysis && (
-            <div className="mt-4 p-3 bg-[#0D0D0F] border border-[#9B59B6]/20 rounded-sm">
+          {/* Marksheet */}
+          {fr.marksheet?.checked && (
+            <div className="p-3 bg-[#0D0D0F] border border-[#1E1E22]">
               <div className="flex items-center gap-2 mb-2">
-                <Brain className="w-3 h-3 text-[#9B59B6]" />
-                <span className="text-[10px] font-mono font-bold text-[#9B59B6]">ON-DEVICE AI ASSESSMENT</span>
-                {state.forensicResult.aiTokensPerSecond && (
-                  <span className="text-[8px] font-mono text-zinc-600 ml-auto">
-                    {state.forensicResult.aiTokensPerSecond.toFixed(1)} tok/s • {state.forensicResult.aiLatencyMs}ms
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-zinc-400 leading-relaxed font-mono">
-                {state.forensicResult.aiAnalysis}
-              </p>
-              <div className="mt-2 flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-[#39FF14]" />
-                <span className="text-[8px] font-mono text-zinc-700">
-                  Processed 100% on-device via RunAnywhere LLM — no data sent to cloud
+                <GraduationCap className="w-3.5 h-3.5 text-[#9B59B6]" />
+                <span className="text-[10px] font-mono font-bold text-[#9B59B6] tracking-wider">MARKSHEET ARITHMETIC</span>
+                <span className="ml-auto text-[10px] font-mono" style={{ color: fr.marksheet.consistent ? "#39FF14" : "#FF3131" }}>
+                  {fr.marksheet.consistent ? "CONSISTENT" : "DOESN'T ADD UP"}
                 </span>
               </div>
+              <div className="text-[11px] font-mono text-zinc-500 space-y-0.5 max-h-40 overflow-y-auto">
+                {fr.marksheet.subjects.map((s, i) => (
+                  <div key={i} className="flex justify-between gap-3">
+                    <span className="truncate">{s.name}</span>
+                    <span className="text-zinc-300">{s.values.join(" · ")}</span>
+                  </div>
+                ))}
+                {fr.marksheet.totalRow && (
+                  <div className="flex justify-between gap-3 pt-1 mt-1 border-t border-[#1E1E22] text-zinc-300">
+                    <span>Total row</span>
+                    <span>{fr.marksheet.totalRow.join(" · ")}</span>
+                  </div>
+                )}
+              </div>
             </div>
           )}
+
+          {/* On-device AI narration */}
+          <div className="p-3 bg-[#0D0D0F] border border-[#9B59B6]/20">
+            <div className="flex items-center gap-2 mb-2">
+              <Brain className="w-3 h-3 text-[#9B59B6]" />
+              <span className="text-[10px] font-mono font-bold text-[#9B59B6]">ON-DEVICE AI EXPLANATION</span>
+              {fr.aiTokensPerSecond && (
+                <span className="text-[8px] font-mono text-zinc-600 ml-auto">
+                  {fr.aiTokensPerSecond.toFixed(1)} tok/s • {fr.aiLatencyMs}ms
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-zinc-400 leading-relaxed font-mono">
+              {fr.aiAnalysis ?? "Load the on-device model in the AI panel below to get a plain-language explanation. The verdict above comes from deterministic checks — the AI only explains it."}
+            </p>
+          </div>
         </div>
       ) : (
         <div className="p-8 flex flex-col items-center justify-center text-center gap-3 min-h-[200px]">
           <Brain className="w-10 h-10 text-zinc-800" />
-          <div>
-            <p className="text-sm text-zinc-500">
-              {isAnalyzing ? "Analyzing your document..." : "Upload a document to start"}
-            </p>
-            <p className="text-[11px] text-zinc-700 mt-1">
-              AI will check for signs of tampering and manipulation
-            </p>
-          </div>
+          <p className="text-sm text-zinc-500">{isAnalyzing ? state.progressMessage ?? "Analyzing your document..." : "Upload a document to start"}</p>
         </div>
       )}
     </motion.div>

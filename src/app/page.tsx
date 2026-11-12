@@ -19,6 +19,7 @@ import AIAssistantPanel from "../components/AIAssistantPanel";
 import VoicePipelinePanel from "../components/VoicePipelinePanel";
 import PerformanceMetrics from "../components/PerformanceMetrics";
 import { ToastProvider } from "../components/ToastProvider";
+import RegistryPanel from "../components/RegistryPanel";
 import { AppProvider, useApp } from "../lib/AppContext";
 
 function DashboardContent() {
@@ -105,13 +106,18 @@ function DashboardContent() {
         {/* ---- VERDICT (only after forensic) ---- */}
         {hasForensic && <VerdictCard />}
 
-        {/* ---- ANALYSIS DETAILS (only after forensic) ---- */}
+        {/* ---- TAMPER MAP + CHECKS (only after forensic) ---- */}
         {hasForensic && (
           <section>
-            <SectionLabel text="Analysis Details" />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <AIForensicPanel />
-              <HeatmapViewer />
+            <SectionLabel text="Where It Was Changed" />
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+              <div className="lg:col-span-2">
+                <HeatmapViewer />
+              </div>
+              <div className="space-y-4">
+                <AIForensicPanel />
+                <RegistryPanel />
+              </div>
             </div>
           </section>
         )}

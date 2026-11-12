@@ -1,0 +1,231 @@
+/**
+ * Fusion — one verdict and one heatmap from all detectors.
+ *
+ * Rule: a region is flagged on its own only by a deterministic ("critical")
+ * layer — hidden earlier version, covered text, preview mismatch, failed
+ * arithmetic, QR mismatch. Pixel-statistics layers flag a region only when
+ * at least two *independent* groups agree on it.
+ */
+
+import type { CheckRun, Evidence, Region, Severity, TamperLayer, VerdictKind } from "./types";
+import { TamperGrid } from "./types";
+
+const GROUP: Record<string, string> = {
+  "pdf-text": "text",
+  "pdf-annot": "annot",
+  "pdf-font": "font",
+  "pdf-revision": "revision",
+  "px-noise": "noise",
+  "px-ela": "compression",
+  "px-bg": "background",
+  glyph: "glyph",
+  thumb: "thumbnail",
+  marksheet: "math",
+  registry: "registry",
+};
+
+export interface FusionResult {
+  verdict: VerdictKind;
+  title: string;
+  summary: string;
+  score: number;
+  risk: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  confidence: number;
+  fused: TamperGrid;
+  evidence: Evidence[];
+  hotspots: { x: number; y: number; width: number; height: number; intensity: number; type: "ela" | "clone" | "noise" | "edit" }[];
+  changes: { before: string; after: string; field?: string }[];
+}
+
+const SEV_ORDER: Record<Severity, number> = { critical: 0, warning: 1, info: 2, pass: 3 };
+const DETERMINISTIC = new Set(["pdf-text", "pdf-structure", "marksheet", "aadhaar", "registry"]);
+
+function dedupe(evidence: Evidence[]): Evidence[] {
+  const out: Evidence[] = [];
+  const byChange = new Map<string, Evidence>();
+  for (const e of evidence) {
+    if (e.change && e.change.after && e.severity === "critical") {
+      const key = `${e.change.before}→${e.change.after}`;
+      const prev = byChange.get(key);
+      if (prev) {
+        // the recovered earlier version is the more convincing headline
+        if (e.layerId === "pdf-revision" && prev.layerId !== "pdf-revision") {
+          const otherDetail = prev.detail;
+          prev.title = e.title;
+          prev.detail = `${e.detail} ${otherDetail}`;
+          prev.layerId = e.layerId;
+          prev.category = e.category;
+        } else if (!prev.detail.includes(e.detail)) {
+          prev.detail += ` ${e.detail}`;
+        }
+        prev.regions = [...(prev.regions ?? []), ...(e.regions ?? [])].slice(0, 8);
+        continue;
+      }
+      byChange.set(key, e);
+    }
+    out.push(e);
+  }
+  return out.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]);
+}
+
+export function fuse(
+  grid: TamperGrid,
+  layers: TamperLayer[],
+  evidenceIn: Evidence[],
+  checks: CheckRun[]
+): FusionResult {
+  const fused = TamperGrid.like(grid);
+  const C = fused.cols, R = fused.rows;
+  const gridLayers = layers.filter((l) => l.grid);
+  const agree = new Uint8Array(fused.data.length);
+
+  for (let k = 0; k < fused.data.length; k++) {
+    let crit = 0;
+    const groups = new Map<string, number>();
+    const r = Math.floor(k / C), c = k % C;
+    for (const l of gridLayers) {
+      const g = l.grid!;
+      if (l.critical) {
+        if (g[k] > crit) crit = g[k];
+        continue;
+      }
+      // allow one cell of misalignment between independent detectors
+      let best = 0;
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const rr = r + dr, cc = c + dc;
+          if (rr < 0 || cc < 0 || rr >= R || cc >= C) continue;
+          const v = g[rr * C + cc];
+          if (v > best) best = v;
+        }
+      }
+      const own = g[k];
+      if (own >= 0.5 || best >= 0.5) {
+        const grp = GROUP[l.id] ?? l.id;
+        groups.set(grp, Math.max(groups.get(grp) ?? 0, Math.max(own, best * 0.9)));
+      }
+    }
+    let v = crit;
+    if (groups.size >= 2) {
+      v = Math.max(v, 0.85);
+      agree[k] = 1;
+    }
+    else if (groups.size === 1) {
+      const only = [...groups.values()][0];
+      // a single statistical detector only counts where it actually fired
+      if (gridLayers.some((l) => !l.critical && l.grid![k] >= 0.5)) v = Math.max(v, 0.35 + only * 0.25);
+    }
+    fused.data[k] = v;
+  }
+
+  const evidence = [...evidenceIn];
+  // Agreement between independent pixel detectors
+  const agreeGrid = TamperGrid.like(grid);
+  for (let k = 0; k < fused.data.length; k++) if (agree[k]) agreeGrid.data[k] = 1;
+  const agreeRegions = agreeGrid.regions(0.5).filter((rg) => rg.w * rg.h < 0.25);
+  if (agreeRegions.length) {
+    evidence.push({
+      id: "fusion-agree",
+      category: "pixel",
+      severity: "warning",
+      title: `Independent checks agree on ${agreeRegions.length} area${agreeRegions.length > 1 ? "s" : ""}`,
+      detail:
+        "Two or more unrelated pixel tests (noise, compression, background, glyph shape) flag the same spot. That's the strongest sign of a local edit that pixel analysis alone can give.",
+      regions: agreeRegions.map((rg) => ({ ...rg, label: "checks agree" })),
+    });
+  }
+
+  const ev = dedupe(evidence);
+  const crit = ev.filter((e) => e.severity === "critical");
+  const warn = ev.filter((e) => e.severity === "warning");
+  const pass = ev.filter((e) => e.severity === "pass");
+  const ran = checks.filter((c) => c.status !== "skip").length;
+  const coverage = Math.min(1, ran / 6 + pass.length * 0.1);
+
+  let verdict: VerdictKind;
+  let title: string;
+  if (ev.some((e) => e.category === "registry" && e.severity === "pass") && !crit.length) {
+    verdict = "MATCHES_ORIGINAL";
+    title = "Matches the registered original";
+  } else if (crit.length) {
+    verdict = "EDITED";
+    title = "Edited — evidence found";
+  } else if (warn.length) {
+    verdict = "SUSPICIOUS";
+    title = warn.length >= 3 ? "Likely edited" : "Suspicious — check the flagged areas";
+  } else if (ran < 3) {
+    verdict = "INCONCLUSIVE";
+    title = "Not enough evidence to judge";
+  } else {
+    verdict = "NO_SIGNS";
+    title = "No signs of editing found";
+  }
+
+  let score: number;
+  let risk: FusionResult["risk"];
+  let confidence: number;
+  switch (verdict) {
+    case "MATCHES_ORIGINAL":
+      score = 100; risk = "LOW"; confidence = 99; break;
+    case "EDITED": {
+      score = Math.max(3, 30 - 8 * (crit.length - 1) - 3 * warn.length);
+      risk = "CRITICAL";
+      confidence = crit.some((e) => DETERMINISTIC.has(e.category)) ? 97 : 85;
+      break;
+    }
+    case "SUSPICIOUS":
+      score = Math.max(40, Math.min(69, 64 - 7 * (warn.length - 1)));
+      risk = warn.length >= 3 ? "HIGH" : "MEDIUM";
+      confidence = 60 + Math.min(25, warn.length * 6);
+      break;
+    case "INCONCLUSIVE":
+      score = 70; risk = "MEDIUM"; confidence = 40; break;
+    default:
+      score = Math.round(80 + 15 * coverage);
+      risk = "LOW";
+      confidence = Math.round(55 + 40 * coverage);
+  }
+
+  const changes = ev.filter((e) => e.change && e.severity === "critical").map((e) => e.change!);
+  const summary = buildSummary(verdict, crit, warn, pass);
+
+  const hotspots = fused.regions(0.5).slice(0, 24).map((rg: Region) => {
+    let intensity = 0;
+    const x0 = Math.floor((rg.x * fused.width) / fused.cellW), y0 = Math.floor((rg.y * fused.height) / fused.cellH);
+    const x1 = Math.ceil(((rg.x + rg.w) * fused.width) / fused.cellW), y1 = Math.ceil(((rg.y + rg.h) * fused.height) / fused.cellH);
+    for (let r = y0; r < Math.min(R, y1); r++) for (let c = x0; c < Math.min(C, x1); c++) intensity = Math.max(intensity, fused.data[r * C + c]);
+    return {
+      x: rg.x * fused.width,
+      y: rg.y * fused.height,
+      width: rg.w * fused.width,
+      height: rg.h * fused.height,
+      intensity,
+      type: "edit" as const,
+    };
+  });
+
+  return { verdict, title, summary, score, risk, confidence, fused, evidence: ev, hotspots, changes };
+}
+
+function buildSummary(verdict: VerdictKind, crit: Evidence[], warn: Evidence[], pass: Evidence[]) {
+  const describe = (e: Evidence) => {
+    if (e.change && e.change.after && !e.change.before.includes("(")) return `${e.title.toLowerCase()} ("${e.change.before}" → "${e.change.after}")`;
+    return e.title.toLowerCase();
+  };
+  if (verdict === "MATCHES_ORIGINAL")
+    return pass.some((e) => e.id === "reg-exact")
+      ? "This file is byte-for-byte identical to the original registered by the issuer."
+      : "Page 1 has the same content as the original registered by the issuer (the file itself was re-saved or re-signed).";
+  if (verdict === "EDITED") {
+    const top = crit.slice(0, 3).map(describe);
+    return `${crit.length} strong sign${crit.length > 1 ? "s" : ""} of editing: ${top.join("; ")}.`;
+  }
+  if (verdict === "SUSPICIOUS") {
+    const top = warn.slice(0, 3).map((e) => e.title.toLowerCase());
+    return `No proof of editing, but ${warn.length} warning${warn.length > 1 ? "s" : ""}: ${top.join("; ")}. Ask for the original or verify with the issuer.`;
+  }
+  if (verdict === "INCONCLUSIVE")
+    return "Too few checks could run on this file (for example a small, re-compressed image with no metadata). Ask for the original PDF or a clear photo.";
+  const passed = pass.slice(0, 3).map((e) => e.title.toLowerCase());
+  return `No signs of editing found${passed.length ? ` — ${passed.join("; ")}` : ""}. This is not proof it is genuine: only a match with the issuer's registered original proves that.`;
+}

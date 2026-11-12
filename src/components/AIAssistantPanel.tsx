@@ -16,6 +16,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useApp } from "../lib/AppContext";
+import type { ForensicResult } from "../lib/forensicEngine";
 import {
   generateWithLLM,
   speakText,
@@ -43,7 +44,7 @@ interface Message {
 // ── Instant Response Cache ──────────────────────────────────────
 // Pre-written answers for common questions → 0ms latency, no LLM call needed.
 // Returns null if no cached answer, meaning LLM should handle it.
-function getInstantResponse(query: string, forensicResult: { authenticityScore: number; forgeryRisk: string; aiConfidence: number; hotspots: { length: number }; detections: { severity: string }[]; pixelStats: { noiseLevel: number; entropy: number }; metadata: { inconsistencies: string[] } } | null, hashResult: { sha256: string; pHash: string } | null, blockchainProof: { networkName: string; blockNumber: number } | null): string | null {
+function getInstantResponse(query: string, forensicResult: ForensicResult | null, hashResult: { sha256: string; pHash: string } | null, blockchainProof: { networkName: string; blockNumber: number } | null): string | null {
   const q = query.toLowerCase().trim();
 
   // General knowledge questions — always cached
@@ -51,43 +52,44 @@ function getInstantResponse(query: string, forensicResult: { authenticityScore: 
     return "On-device AI runs machine learning models directly in your browser using WebAssembly — no data is sent to any server. This means 100% privacy, zero cloud costs, and it works offline.";
   }
   if (q.includes("what can you analyze") || q.includes("what do you do") || q.includes("what can you do")) {
-    return "I analyze documents for forgery using Error Level Analysis, pixel statistics, metadata inspection, and AI reasoning — all running locally on your device via WebAssembly.";
+    return "I check Aadhaar cards, marksheets and certificates for edits — without the original. I look for older versions hidden inside PDFs, text covered by white boxes, pasted digits, QR data that doesn't match the printed text, and totals that don't add up. Everything runs in your browser.";
   }
   if (q.includes("how does verification work") || q.includes("how do you verify") || q.includes("how does it work")) {
-    return "Upload a document → I run forensic analysis (ELA, pixel stats, metadata) → generate a SHA-256 hash fingerprint → optionally anchor it on blockchain for tamper-proof verification. Everything runs in your browser.";
+    return "With no original to compare, VeriChain uses four references: the document against itself (grain, background, digit shapes), older versions hidden inside the file, signed data printed on it (the Aadhaar QR), and its own rules (check digit, marks adding up). All checks write onto one grid, which becomes the Tamper Map.";
   }
   if (q.includes("how does hashing work") || q.includes("what is hashing") || q.includes("what is sha")) {
     return "SHA-256 creates a unique 256-bit fingerprint of your document. Any change — even a single pixel — produces a completely different hash, making tampering instantly detectable.";
   }
   if (q.includes("what is blockchain") || q.includes("how does blockchain")) {
-    return "The document's hash is minted as a proof on the Polygon blockchain, creating a permanent, tamper-proof record that anyone can independently verify.";
+    return "An issuer anchors the document's spatial Merkle root on Polygon. Anyone can then check a copy against it, cell by cell, without trusting our server.";
   }
   if (q.includes("is it private") || q.includes("privacy") || q.includes("is my data safe")) {
     return "100% private. All AI models run in your browser via WebAssembly. Your documents never leave your device — zero network calls, zero cloud storage.";
   }
 
-  // Dynamic answers based on forensic results
+  // Dynamic answers based on the Tamper Map result
   if (forensicResult) {
     const fr = forensicResult;
-    if (q.includes("is this") && (q.includes("authentic") || q.includes("real") || q.includes("genuine"))) {
-      if (fr.authenticityScore >= 80) return `This document scores ${fr.authenticityScore}% authenticity with ${fr.forgeryRisk} forgery risk. The analysis indicates it is likely authentic with consistent compression levels and no major anomalies detected.`;
-      if (fr.authenticityScore >= 60) return `This document scores ${fr.authenticityScore}% authenticity with ${fr.forgeryRisk} forgery risk. Some inconsistencies were detected — review the hotspots and ELA heatmap for details.`;
-      return `This document scores ${fr.authenticityScore}% authenticity with ${fr.forgeryRisk} forgery risk. Significant anomalies detected — ${fr.hotspots.length} suspicious regions found. This document may have been manipulated.`;
+    const crit = fr.evidence.filter((e) => e.severity === "critical");
+    const warn = fr.evidence.filter((e) => e.severity === "warning");
+    const changes = fr.changes.map((c) => `${c.field ? c.field + ": " : ""}${c.before} → ${c.after}`).join(", ");
+    if (q.includes("is this") && (q.includes("authentic") || q.includes("real") || q.includes("genuine") || q.includes("fake") || q.includes("forged"))) {
+      if (fr.verdict === "NO_SIGNS") return `${fr.verdictTitle}. ${fr.summary}`;
+      return `${fr.verdictTitle}. ${fr.summary}${changes ? ` Changed: ${changes}.` : ""}`;
     }
     if (q.includes("risk") || q.includes("danger") || q.includes("threat")) {
-      const criticals = fr.detections.filter(d => d.severity === "critical").length;
-      const warnings = fr.detections.filter(d => d.severity === "warning").length;
-      return `Forgery risk: ${fr.forgeryRisk}. Found ${criticals} critical issue(s) and ${warnings} warning(s). Noise level: ${fr.pixelStats.noiseLevel.toFixed(1)}, entropy: ${fr.pixelStats.entropy.toFixed(1)}.`;
+      if (!crit.length && !warn.length) return `Risk: ${fr.forgeryRisk}. No check found an edit.`;
+      return `Risk: ${fr.forgeryRisk}. ${crit.length} critical, ${warn.length} warning(s): ${[...crit, ...warn].slice(0, 4).map((e) => e.title).join("; ")}.`;
     }
-    if (q.includes("hotspot") || q.includes("suspicious") || q.includes("anomal")) {
-      if (fr.hotspots.length === 0) return "No suspicious hotspots detected. The ELA analysis shows consistent compression levels across the entire image.";
-      return `Found ${fr.hotspots.length} suspicious hotspot(s) via Error Level Analysis. These regions show compression inconsistencies that may indicate editing. Check the heatmap for visual details.`;
+    if (q.includes("hotspot") || q.includes("suspicious") || q.includes("anomal") || q.includes("where") || q.includes("changed") || q.includes("what was")) {
+      if (!fr.hotspots.length && !changes) return "No area of the document was flagged.";
+      return `${fr.hotspots.length} area(s) flagged on the Tamper Map.${changes ? ` What changed: ${changes}.` : ""} Red boxes mark deterministic findings or places where independent checks agree.`;
     }
     if (q.includes("summar") || q.includes("finding") || q.includes("result") || q.includes("report")) {
-      return `Authenticity: ${fr.authenticityScore}%, Risk: ${fr.forgeryRisk}, Confidence: ${fr.aiConfidence}%. Detected ${fr.hotspots.length} hotspot(s), ${fr.detections.length} finding(s). Noise: ${fr.pixelStats.noiseLevel.toFixed(1)}, Entropy: ${fr.pixelStats.entropy.toFixed(1)}.${fr.metadata.inconsistencies.length > 0 ? ` Metadata issues: ${fr.metadata.inconsistencies.join("; ")}.` : ""}`;
+      return `${fr.verdictTitle}. ${fr.summary} (${fr.checks.filter((c) => c.status !== "skip").length} checks ran on-device in ${(fr.analysisMs / 1000).toFixed(1)}s.)`;
     }
     if (q.includes("accuracy") || q.includes("score") || q.includes("confidence")) {
-      return `Authenticity score: ${fr.authenticityScore}% (AI confidence: ${fr.aiConfidence}%). This is based on ELA, pixel statistics, noise analysis, and metadata inspection — all computed on-device.`;
+      return `Integrity score ${fr.authenticityScore}/100 (${fr.verdictTitle}). The verdict comes from deterministic checks — hidden versions, covered text, QR/check-digit and arithmetic — plus pixel checks that only count when two of them agree.`;
     }
   }
 
@@ -109,6 +111,8 @@ function getInstantResponse(query: string, forensicResult: { authenticityScore: 
 
 export default function AIAssistantPanel() {
   const { state, aiState } = useApp();
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -142,18 +146,25 @@ export default function AIAssistantPanel() {
     ]);
 
     // Register forensic tools for tool calling
-    registerForensicTools(() => ({
-      authenticityScore: state.forensicResult?.authenticityScore,
-      forgeryRisk: state.forensicResult?.forgeryRisk,
-      aiConfidence: state.forensicResult?.aiConfidence,
-      hotspotCount: state.forensicResult?.hotspots.length,
-      detectionCount: state.forensicResult?.detections.length,
-      entropy: state.forensicResult?.pixelStats.entropy,
-      noiseLevel: state.forensicResult?.pixelStats.noiseLevel,
-      sha256: state.hashResult?.sha256,
-      pHash: state.hashResult?.pHash,
-      blockchainStatus: state.blockchainProof ? "minted" : "pending",
-    }));
+    // read through a ref — the state captured at mount would never change
+    registerForensicTools(() => {
+      const st = stateRef.current;
+      return {
+        authenticityScore: st.forensicResult?.authenticityScore,
+        forgeryRisk: st.forensicResult?.forgeryRisk,
+        aiConfidence: st.forensicResult?.aiConfidence,
+        hotspotCount: st.forensicResult?.hotspots.length,
+        detectionCount: st.forensicResult?.detections.length,
+        entropy: st.forensicResult?.pixelStats.entropy,
+        noiseLevel: st.forensicResult?.pixelStats.noiseLevel,
+        sha256: st.hashResult?.sha256,
+        pHash: st.hashResult?.pHash,
+        blockchainStatus: st.blockchainProof ? (st.blockchainProof.explorerUrl ? "anchored on Polygon Amoy" : "local proof only") : "pending",
+        verdict: st.forensicResult?.verdictTitle,
+        summary: st.forensicResult?.summary,
+        changes: st.forensicResult?.changes.map((c) => `${c.before} -> ${c.after}`).join(", "),
+      };
+    });
 
     return () => {
       cleanupTools();
@@ -167,7 +178,7 @@ export default function AIAssistantPanel() {
   const buildContext = useCallback((): string => {
     if (state.forensicResult) {
       const fr = state.forensicResult;
-      return `Doc verification AI. 1 sentence max. Score:${fr.authenticityScore}% Risk:${fr.forgeryRisk}`;
+      return `Doc verification AI. 1 sentence max. Verdict:${fr.verdictTitle}. ${fr.changes.length ? `Changed:${fr.changes.slice(0, 3).map((c) => `${c.before}->${c.after}`).join(",")}` : ""}`;
     }
     return "Doc verification AI. 1 sentence max.";
   }, [state]);
@@ -204,7 +215,7 @@ export default function AIAssistantPanel() {
           role: "assistant",
           content: cachedResponse,
           timestamp: Date.now(),
-          metrics: { tokensPerSecond: 999, latencyMs: 150 },
+          // instant answer from the analysis result — no LLM ran, so no speed metrics to show
         };
         setMessages((prev) => [...prev, assistantMsg]);
         setIsGenerating(false);

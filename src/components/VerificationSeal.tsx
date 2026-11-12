@@ -10,15 +10,31 @@ export default function VerificationSeal() {
   const isComplete = state.stage === "complete";
   const proof = state.blockchainProof;
 
+  // The record states what the analysis found — it never certifies an edited file.
+  const verdict = state.forensicResult?.verdict;
   const sealColor =
-    state.sealStatus === "ACTIVE"
-      ? "#39FF14"
-      : state.sealStatus === "REVOKED"
+    state.sealStatus === "REVOKED" || verdict === "EDITED"
       ? "#FF3131"
-      : "#FFB800";
+      : verdict === "SUSPICIOUS" || verdict === "INCONCLUSIVE" || state.sealStatus === "EXPIRED"
+      ? "#FFB800"
+      : "#39FF14";
 
   const statusLabel =
-    state.sealStatus === "ACTIVE" ? "Verified" : state.sealStatus === "REVOKED" ? "Revoked" : "Expired";
+    state.sealStatus === "REVOKED"
+      ? "Revoked"
+      : verdict === "EDITED"
+      ? "Edited"
+      : verdict === "SUSPICIOUS"
+      ? "Suspicious"
+      : verdict === "INCONCLUSIVE"
+      ? "Inconclusive"
+      : verdict === "MATCHES_ORIGINAL"
+      ? "Matches original"
+      : verdict === "NO_SIGNS"
+      ? "No edits found"
+      : state.sealStatus === "ACTIVE"
+      ? "Recorded"
+      : "Expired";
 
   return (
     <motion.div
@@ -30,7 +46,7 @@ export default function VerificationSeal() {
       <div className="flex items-center justify-between p-4 border-b border-[#1E1E22]">
         <div className="flex items-center gap-2">
           <Shield className="w-4 h-4" style={{ color: sealColor }} />
-          <span className="text-sm font-semibold text-zinc-300">Proof Certificate</span>
+          <span className="text-sm font-semibold text-zinc-300">Analysis Record</span>
         </div>
         {isComplete && (
           <span className="text-xs px-2 py-0.5 rounded-full" style={{
@@ -64,7 +80,7 @@ export default function VerificationSeal() {
               </div>
 
               <p className="text-[11px] text-zinc-500 text-center">
-                Scan this QR code to verify this document anytime
+                Fingerprint + verdict of this exact file. Scan to look it up later.
               </p>
 
               {/* Proof details */}
@@ -74,12 +90,16 @@ export default function VerificationSeal() {
                   <span className="text-zinc-300 font-mono text-[11px]">{state.documentId}</span>
                 </div>
                 <div className="flex justify-between py-1.5 border-b border-[#1E1E22]">
+                  <span className="text-zinc-500">Verdict</span>
+                  <span style={{ color: sealColor }}>{state.forensicResult?.verdictTitle ?? statusLabel}</span>
+                </div>
+                <div className="flex justify-between py-1.5 border-b border-[#1E1E22]">
                   <span className="text-zinc-500">Network</span>
                   <span className="text-zinc-300">{proof.networkName}</span>
                 </div>
                 <div className="flex justify-between py-1.5 border-b border-[#1E1E22]">
                   <span className="text-zinc-500">Block</span>
-                  <span className="text-zinc-300">#{proof.blockNumber.toLocaleString()}</span>
+                  <span className="text-zinc-300">{proof.blockNumber ? `#${proof.blockNumber.toLocaleString()}` : "—"}</span>
                 </div>
                 <div className="flex justify-between py-1.5">
                   <span className="text-zinc-500">Recorded</span>

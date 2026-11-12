@@ -34,8 +34,14 @@ const EXPLORER_URL = "https://amoy.polygonscan.com/tx/";
 /**
  * Get provider for Polygon Amoy testnet
  */
+// One shared provider with a fixed network: no network-detection loop that retries forever
+// (and floods the console) when the RPC is unreachable, e.g. on flaky Wi-Fi or offline.
+let _provider: ethers.JsonRpcProvider | null = null;
 export function getProvider(): ethers.JsonRpcProvider {
-  return new ethers.JsonRpcProvider(AMOY_RPC);
+  if (!_provider) {
+    _provider = new ethers.JsonRpcProvider(AMOY_RPC, AMOY_CHAIN_ID, { staticNetwork: true, batchMaxCount: 1 });
+  }
+  return _provider;
 }
 
 /**
@@ -209,7 +215,7 @@ export async function mintProof(
       onEvent({
         timestamp: now(),
         action: "WALLET",
-        detail: "No Web3 wallet detected — using view-only proof generation",
+        detail: "No Web3 wallet — creating a local proof only (connect MetaMask to publish on Polygon Amoy)",
         status: "confirmed",
       });
 
@@ -235,7 +241,7 @@ export async function mintProof(
       onEvent({
         timestamp: now(),
         action: "MINT_PROOF",
-        detail: "Minting authenticity proof → Polygon Amoy",
+        detail: "Computing proof hash locally (simulation — nothing is sent)",
         status: "broadcasting",
       });
 
@@ -246,7 +252,7 @@ export async function mintProof(
       onEvent({
         timestamp: now(),
         action: "TX_BROADCAST",
-        detail: "Transaction broadcast to network",
+        detail: "Local proof hash ready (not broadcast)",
         status: "confirmed",
         txHash: simulatedTxHash,
       });
@@ -258,13 +264,15 @@ export async function mintProof(
       try {
         blockHeight = await provider.getBlockNumber();
       } catch {
-        blockHeight = 48291037;
+        blockHeight = 0; // RPC unreachable — don't invent a block number
       }
 
       onEvent({
         timestamp: now(),
         action: "BLOCK_CONFIRM",
-        detail: `Block #${blockHeight.toLocaleString()} — proof anchored (view-only mode)`,
+        detail: blockHeight
+          ? `Polygon Amoy is at block #${blockHeight.toLocaleString()} — this proof is NOT on chain (simulation)`
+          : "Polygon Amoy not reachable — this proof is NOT on chain (simulation)",
         status: "confirmed",
       });
 
@@ -273,24 +281,24 @@ export async function mintProof(
       onEvent({
         timestamp: now(),
         action: "ANCHOR_HASH",
-        detail: `SHA256 fingerprint recorded: 0x${sha256.slice(0, 16)}...`,
+        detail: `SHA256 fingerprint in local proof: 0x${sha256.slice(0, 16)}...`,
         status: "confirmed",
       });
 
       onEvent({
         timestamp: now(),
         action: "COMPLETE",
-        detail: "Proof generation complete — install MetaMask for on-chain minting",
+        detail: "Local proof complete — install MetaMask to anchor it on Polygon Amoy",
         status: "confirmed",
       });
 
       return {
         txHash: simulatedTxHash,
         blockNumber: blockHeight,
-        networkName: "Polygon Amoy (view-only)",
+        networkName: "Local proof (not on chain)",
         timestamp: new Date().toISOString(),
         gasUsed: "0",
-        explorerUrl: `${EXPLORER_URL}${simulatedTxHash}`,
+        explorerUrl: "",
       };
     }
 

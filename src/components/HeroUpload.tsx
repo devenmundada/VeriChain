@@ -1,16 +1,43 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, FileSearch, X, ImageIcon, RotateCcw } from "lucide-react";
+import { Upload, FileSearch, ImageIcon, RotateCcw, Lock, FileText, FlaskConical } from "lucide-react";
 import { useApp } from "../lib/AppContext";
 
+interface Sample {
+  file: string;
+  title: string;
+  kind: string;
+  expect: string;
+}
+
 export default function HeroUpload() {
-  const { state, startPipeline, reset } = useApp();
+  const { state, startPipeline, submitPassword, reset } = useApp();
   const inputRef = useRef<HTMLInputElement>(null);
+  const [samples, setSamples] = useState<Sample[]>([]);
+  const [password, setPassword] = useState("");
+
+  useEffect(() => {
+    fetch("/samples/manifest.json")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: Sample[]) => setSamples(list))
+      .catch(() => setSamples([]));
+  }, []);
+
+  const runSample = useCallback(
+    async (s: Sample) => {
+      const res = await fetch(`/samples/${s.file}`);
+      const blob = await res.blob();
+      startPipeline(new File([blob], s.file, { type: blob.type || (s.file.endsWith(".pdf") ? "application/pdf" : "image/jpeg") }));
+    },
+    [startPipeline]
+  );
 
   const isIdle = state.stage === "idle";
   const isProcessing = !isIdle && state.stage !== "complete" && state.stage !== "error";
+  // once the analysis is done the user can start over, even while the blockchain step finishes
+  const canReset = state.stage === "complete" || state.stage === "error" || state.stage === "hashing" || state.stage === "minting";
 
   const handleFile = useCallback(
     (file: File) => {
@@ -38,83 +65,6 @@ export default function HeroUpload() {
     if (inputRef.current) inputRef.current.value = "";
   };
 
-  // Demo sample — create a synthetic image for instant demo
-  const handleDemo = async () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 800;
-    canvas.height = 600;
-    const ctx = canvas.getContext("2d")!;
-
-    // Draw a fake certificate
-    ctx.fillStyle = "#F5F0E8";
-    ctx.fillRect(0, 0, 800, 600);
-
-    // Border
-    ctx.strokeStyle = "#C9A961";
-    ctx.lineWidth = 4;
-    ctx.strokeRect(20, 20, 760, 560);
-    ctx.lineWidth = 1;
-    ctx.strokeRect(30, 30, 740, 540);
-
-    // Title
-    ctx.fillStyle = "#1A1A2E";
-    ctx.font = "bold 36px serif";
-    ctx.textAlign = "center";
-    ctx.fillText("Certificate of Authenticity", 400, 100);
-
-    // Decorative line
-    ctx.strokeStyle = "#C9A961";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(150, 120);
-    ctx.lineTo(650, 120);
-    ctx.stroke();
-
-    // Body text
-    ctx.font = "18px serif";
-    ctx.fillStyle = "#333";
-    ctx.fillText("This is to certify that the document bearer", 400, 200);
-    ctx.font = "bold 28px serif";
-    ctx.fillStyle = "#1A1A2E";
-    ctx.fillText("VeriChain Demo Document", 400, 250);
-    ctx.font = "16px serif";
-    ctx.fillStyle = "#555";
-    ctx.fillText("has been verified using AI forensic analysis", 400, 300);
-    ctx.fillText("and blockchain cryptographic proof.", 400, 325);
-
-    // Date
-    ctx.font = "14px serif";
-    ctx.fillStyle = "#777";
-    ctx.fillText(`Issued: ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`, 400, 400);
-
-    // Add some deliberate noise in one region (to trigger ELA)
-    const noiseRegion = ctx.getImageData(500, 350, 120, 80);
-    for (let i = 0; i < noiseRegion.data.length; i += 4) {
-      noiseRegion.data[i] = Math.min(255, noiseRegion.data[i] + Math.random() * 40);
-      noiseRegion.data[i + 1] = Math.min(255, noiseRegion.data[i + 1] + Math.random() * 30);
-    }
-    ctx.putImageData(noiseRegion, 500, 350);
-
-    // Signature area
-    ctx.font = "italic 20px serif";
-    ctx.fillStyle = "#1A1A2E";
-    ctx.fillText("Digital Signature", 400, 480);
-    ctx.strokeStyle = "#333";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(280, 500);
-    ctx.quadraticCurveTo(350, 470, 400, 500);
-    ctx.quadraticCurveTo(450, 530, 520, 500);
-    ctx.stroke();
-
-    canvas.toBlob((blob) => {
-      if (blob) {
-        const file = new File([blob], "VeriChain-Demo-Certificate.jpg", { type: "image/jpeg" });
-        handleFile(file);
-      }
-    }, "image/jpeg", 0.92);
-  };
-
   return (
     <div className="w-full">
       <AnimatePresence mode="wait">
@@ -134,8 +84,8 @@ export default function HeroUpload() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.1 }}
               >
-                Verify any document in{" "}
-                <span className="text-[#39FF14]">seconds</span>
+                Catch edited documents —{" "}
+                <span className="text-[#39FF14]">without the original</span>
               </motion.h2>
               <motion.p
                 className="text-zinc-400 text-base md:text-lg max-w-xl mx-auto"
@@ -143,8 +93,9 @@ export default function HeroUpload() {
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.2 }}
               >
-                Upload an image or document. On-device AI scans for tampering, creates a
-                unique fingerprint, and records proof on the blockchain — <span className="text-[#39FF14]">100% in your browser, zero cloud</span>.
+                Upload an Aadhaar card, marksheet or certificate (PDF or photo). VeriChain finds hidden earlier
+                versions, covered text, pasted digits, QR mismatches and totals that don&apos;t add up — then shows
+                exactly where it was changed. <span className="text-[#39FF14]">100% in your browser, zero cloud</span>.
               </motion.p>
             </div>
 
@@ -165,7 +116,7 @@ export default function HeroUpload() {
                 <input
                   ref={inputRef}
                   type="file"
-                  accept="image/*,.pdf,.doc,.docx"
+                  accept="image/*,.pdf,application/pdf"
                   className="hidden"
                   onChange={handleInputChange}
                 />
@@ -183,20 +134,32 @@ export default function HeroUpload() {
                     Drag & drop your file here
                   </p>
                   <p className="text-sm text-zinc-500 mt-1">
-                    or click to browse — PNG, JPG, PDF, DOCX up to 50MB
+                    or click to browse — PDF, JPG, PNG (e-Aadhaar, DigiLocker, scans, photos)
                   </p>
                 </div>
               </div>
 
-              {/* Demo button */}
-              <div className="px-6 pb-5 pt-2 text-center">
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleDemo(); }}
-                  className="text-sm text-zinc-500 hover:text-[#39FF14] transition-colors underline underline-offset-2 decoration-zinc-700 hover:decoration-[#39FF14]/40"
-                >
-                  or try a demo sample →
-                </button>
-              </div>
+              {/* Demo samples */}
+              {samples.length > 0 && (
+                <div className="px-5 pb-5 pt-1" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2 mb-2 text-[10px] font-mono text-zinc-500 tracking-[0.15em]">
+                    <FlaskConical className="w-3 h-3" /> TRY A TEST DOCUMENT (FICTIONAL SAMPLES)
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {samples.map((s) => (
+                      <button
+                        key={s.file}
+                        onClick={() => runSample(s)}
+                        className="flex items-center gap-2 px-3 py-2 text-left border border-[#1E1E22] hover:border-[#39FF14]/40 hover:bg-[#39FF14]/5 transition-colors group"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-zinc-600 group-hover:text-[#39FF14] shrink-0" />
+                        <span className="text-[11px] text-zinc-300 truncate">{s.title}</span>
+                        <span className="ml-auto text-[9px] font-mono text-zinc-600 shrink-0">{s.kind}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </motion.div>
 
             {/* Trust badges */}
@@ -208,7 +171,7 @@ export default function HeroUpload() {
             >
               <span className="flex items-center gap-1.5">
                 <div className="w-1.5 h-1.5 rounded-full bg-[#39FF14]" />
-                On-device AI — files never leave your device
+                Files never leave your device
               </span>
               <span className="hidden md:flex items-center gap-1.5">
                 <div className="w-1.5 h-1.5 rounded-full bg-[#00B4D8]" />
@@ -251,10 +214,10 @@ export default function HeroUpload() {
                 {isProcessing && (
                   <div className="flex items-center gap-2">
                     <FileSearch className="w-4 h-4 text-[#FFB800] animate-pulse" />
-                    <span className="text-xs text-[#FFB800]">Processing...</span>
+                    <span className="text-xs text-[#FFB800] max-w-[220px] truncate">{state.progressMessage ?? "Processing..."}</span>
                   </div>
                 )}
-                {(state.stage === "complete" || state.stage === "error") && (
+                {canReset && (
                   <button
                     onClick={handleReset}
                     className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors px-3 py-1.5 border border-[#1E1E22] hover:border-[#2A2A30]"
@@ -266,8 +229,44 @@ export default function HeroUpload() {
               </div>
             </div>
 
+            {/* PDF password prompt */}
+            {state.passwordPrompt && (
+              <form
+                className="p-4 border-b border-[#1E1E22] space-y-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitPassword(password);
+                  setPassword("");
+                }}
+              >
+                <div className="flex items-center gap-2 text-sm text-zinc-300">
+                  <Lock className="w-4 h-4 text-[#FFB800]" />
+                  {state.passwordPrompt.incorrect ? "Wrong password — try again" : "This PDF is password-protected"}
+                </div>
+                <p className="text-[11px] text-zinc-500">
+                  e-Aadhaar: first 4 letters of the name in CAPITALS + year of birth (e.g. RAHU1990). The password is used only in this browser.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    autoFocus
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="flex-1 bg-[#0D0D0F] border border-[#2A2A30] px-3 py-1.5 text-sm text-zinc-200 outline-none focus:border-[#39FF14]/50"
+                    placeholder="PDF password"
+                  />
+                  <button type="submit" className="px-4 py-1.5 text-xs border border-[#39FF14]/40 text-[#39FF14] hover:bg-[#39FF14]/10">
+                    Unlock
+                  </button>
+                  <button type="button" onClick={() => submitPassword(null)} className="px-3 py-1.5 text-xs border border-[#1E1E22] text-zinc-500 hover:text-zinc-300">
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            )}
+
             {/* Progress visualization */}
-            {isProcessing && state.filePreviewUrl && (
+            {isProcessing && (
               <div className="relative h-2 bg-[#0D0D0F]">
                 <motion.div
                   className="absolute inset-y-0 left-0 bg-gradient-to-r from-[#39FF14]/60 to-[#39FF14]"

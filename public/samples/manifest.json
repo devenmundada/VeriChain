@@ -1,0 +1,50 @@
+[
+  {
+    "file": "marksheet-genuine.pdf",
+    "title": "Genuine marksheet",
+    "kind": "PDF",
+    "expect": "No signs of editing"
+  },
+  {
+    "file": "marksheet-edited-whitebox.pdf",
+    "title": "Edited: white box + retyped mark",
+    "kind": "PDF",
+    "expect": "Edited (45 → 85)"
+  },
+  {
+    "file": "marksheet-edited-incremental.pdf",
+    "title": "Edited: marks, total & % changed",
+    "kind": "PDF",
+    "expect": "Edited (hidden earlier version)"
+  },
+  {
+    "file": "marksheet-signed.pdf",
+    "title": "Signed marksheet (like DigiLocker)",
+    "kind": "PDF",
+    "expect": "No signs of editing (signed, nothing added after)"
+  },
+  {
+    "file": "marksheet-signed-then-edited.pdf",
+    "title": "Signed, then edited",
+    "kind": "PDF",
+    "expect": "Edited (changed after it was signed)"
+  },
+  {
+    "file": "marksheet-photo.jpg",
+    "title": "Photo of genuine marksheet",
+    "kind": "JPG",
+    "expect": "No signs of editing"
+  },
+  {
+    "file": "marksheet-photo-edited.jpg",
+    "title": "Photo: mark whited-out & pasted",
+    "kind": "JPG",
+    "expect": "Edited / suspicious area"
+  },
+  {
+    "file": "marksheet-screenshot-edited.png",
+    "title": "Screenshot: pasted digits",
+    "kind": "PNG",
+    "expect": "Edited / suspicious area"
+  }
+]

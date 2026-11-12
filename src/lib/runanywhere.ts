@@ -394,6 +394,9 @@ export function registerForensicTools(getForensicData: () => {
   sha256?: string;
   pHash?: string;
   blockchainStatus?: string;
+  verdict?: string;
+  summary?: string;
+  changes?: string;
 }): void {
   if (_toolsRegistered) return;
   _toolsRegistered = true;
@@ -403,7 +406,7 @@ export function registerForensicTools(getForensicData: () => {
   ToolCalling.registerTool(
     {
       name: "get_forensic_report",
-      description: "Gets the current document forensic analysis results including authenticity score, forgery risk, and detection counts",
+      description: "Gets the current document's tamper analysis: verdict, plain-language summary, what was changed, integrity score and risk",
       parameters: [],
       category: "Forensics",
     },
@@ -417,6 +420,9 @@ export function registerForensicTools(getForensicData: () => {
         detection_count: toToolValue(data.detectionCount ?? 0),
         entropy: toToolValue(data.entropy ?? 0),
         noise_level: toToolValue(data.noiseLevel ?? 0),
+        verdict: toToolValue(data.verdict ?? "not analysed yet"),
+        summary: toToolValue(data.summary ?? ""),
+        what_changed: toToolValue(data.changes || "nothing found"),
       };
     }
   );
