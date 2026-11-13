@@ -43,11 +43,17 @@ Most verifiers never have the original document. VeriChain compares the upload w
 | **Signed data printed on it** | Aadhaar Secure QR (UIDAI-signed name, DOB, gender, last 4 digits) vs printed text; PDF signature changed after signing | Edited date of birth on an Aadhaar card |
 | **The document's own rules** | Aadhaar Verhoeff check digit; marksheet column sums vs Total, obtained ≤ max, percentage | Changed mark when the total wasn't updated |
 
+Also on-device: the **photo UIDAI signs inside the Aadhaar Secure QR** (JPEG 2000) is decoded and compared with the
+printed photo (swapped photo → edited); fields are read **as they look on the page** (annotations, white boxes and text
+typed over text replace what they cover), so edits made in **Canva** or **iLovePDF** are caught by the QR mismatch; and
+**grade cards** are checked with their own arithmetic (SGPA = credit points ÷ credits, CGPA = cumulative points ÷
+cumulative credits, credits × grade points = credit points).
+
 Every detector writes onto one shared grid (the spatial hash map). A region turns red only when a deterministic check fires or **two independent checks agree**, which keeps false alarms down. The verdict is **Edited / Suspicious / No signs of editing / Matches registered original**, with a "what was changed" list (for example `45 → 85`) and a layered heatmap.
 
 **With the original:** an issuer registers a genuine file on-device; any later copy is compared cell by cell, and a **spatial Merkle root** (one leaf per grid row) is what gets anchored on Polygon.
 
-Try it: the home page has six fictional sample files (genuine and edited marksheets as PDF/JPG/PNG). See [docs/DEMO.md](docs/DEMO.md).
+Try it: the home page has nine fictional sample files (genuine and edited marksheets as PDF/JPG/PNG). See [docs/DEMO.md](docs/DEMO.md).
 
 ## RunAnywhere SDK Integration — Complete Feature Coverage
 

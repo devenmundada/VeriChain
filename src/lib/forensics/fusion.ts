@@ -40,12 +40,24 @@ export interface FusionResult {
 const SEV_ORDER: Record<Severity, number> = { critical: 0, warning: 1, info: 2, pass: 3 };
 const DETERMINISTIC = new Set(["pdf-text", "pdf-structure", "marksheet", "aadhaar", "registry"]);
 
+/** The part that actually changed ("Percentage: 72.67" → "Percentage:74.33" is "72.67→74.33"). */
+function changeKey(before: string, after: string) {
+  const a = before.replace(/\s+/g, ""), b = after.replace(/\s+/g, "");
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  while (p > 0 && /[\w.]/.test(a[p - 1])) p--;
+  let q = 0;
+  while (q < a.length - p && q < b.length - p && a[a.length - 1 - q] === b[b.length - 1 - q]) q++;
+  while (q > 0 && /[\w.]/.test(a[a.length - q])) q--;
+  return `${a.slice(p, a.length - q)}→${b.slice(p, b.length - q)}`;
+}
+
 function dedupe(evidence: Evidence[]): Evidence[] {
   const out: Evidence[] = [];
   const byChange = new Map<string, Evidence>();
   for (const e of evidence) {
     if (e.change && e.change.after && e.severity === "critical") {
-      const key = `${e.change.before}→${e.change.after}`;
+      const key = changeKey(e.change.before, e.change.after);
       const prev = byChange.get(key);
       if (prev) {
         // the recovered earlier version is the more convincing headline
@@ -59,6 +71,9 @@ function dedupe(evidence: Evidence[]): Evidence[] {
           prev.detail += ` ${e.detail}`;
         }
         prev.regions = [...(prev.regions ?? []), ...(e.regions ?? [])].slice(0, 8);
+        // show the most focused label ("72.67 → 74.33" rather than "Percentage: 72.67 → Percentage:74.33")
+        if (prev.change && e.change && e.change.before.length + e.change.after.length < prev.change.before.length + prev.change.after.length)
+          prev.change = { ...e.change, field: e.change.field ?? prev.change.field };
         continue;
       }
       byChange.set(key, e);
@@ -166,8 +181,13 @@ export function fuse(
       for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (mask[r * C + c]) return true;
       return false;
     });
+  // ID cards: one statistical detector alone is information only; two independent detectors
+  // agreeing on an identity field (name, DOB, gender, number) stay a warning.
   const ev = dedupe(evidence).map((e) =>
-    opts.idCard && (e.severity === "warning" || e.severity === "critical") && (e.category === "pixel" || e.category === "glyph" || e.category === "pdf-font") && !onIdField(e)
+    opts.idCard &&
+    (e.severity === "warning" || e.severity === "critical") &&
+    (e.category === "pixel" || e.category === "glyph" || e.category === "pdf-font") &&
+    !(e.id === "fusion-agree" && onIdField(e))
       ? { ...e, severity: "info" as const, detail: idInfo + e.detail }
       : e
   );

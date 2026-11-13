@@ -162,27 +162,32 @@ export function analyzeGlyphs(canvas: HTMLCanvasElement, words: OcrWord[], grid:
   const zr = z(deltas.map((d) => d.hRatio));
   const zb = z(deltas.map((d) => d.base));
 
-  const flagged: { d: Delta; reasons: string[] }[] = [];
+  const flagged: { d: Delta; reasons: string[]; strong: boolean }[] = [];
   for (const d of deltas) {
     const reasons: string[] = [];
-    if (Math.abs(d.ink - zi.m) > Math.max(22, 5 * zi.s)) reasons.push(d.ink < zi.m ? "has darker ink" : "has lighter ink");
-    if (Math.abs(d.hue - zh.m) > Math.max(18, 5 * zh.s)) reasons.push("has a different ink colour");
-    if ((d.sharp > Math.max(1.45, zs.m + 5 * zs.s)) || (d.sharp < Math.min(0.6, zs.m - 5 * zs.s))) reasons.push(d.sharp > zs.m ? "has sharper edges" : "has blurrier edges");
+    let inkLike = false;
+    if (Math.abs(d.ink - zi.m) > Math.max(22, 5 * zi.s)) { reasons.push(d.ink < zi.m ? "has darker ink" : "has lighter ink"); inkLike = true; }
+    if (Math.abs(d.hue - zh.m) > Math.max(18, 5 * zh.s)) { reasons.push("has a different ink colour"); inkLike = true; }
+    if ((d.sharp > Math.max(1.45, zs.m + 5 * zs.s)) || (d.sharp < Math.min(0.6, zs.m - 5 * zs.s))) { reasons.push(d.sharp > zs.m ? "has sharper edges" : "has blurrier edges"); inkLike = true; }
+    const bigSize = Math.abs(d.hRatio - zr.m) > Math.max(0.3, 6 * zr.s);
+    const bigBase = Math.abs(d.base - zb.m) > Math.max(3.5, d.rowH * 0.25, 6 * zb.s);
     if (Math.abs(d.hRatio - zr.m) > Math.max(0.18, 5 * zr.s)) reasons.push(d.hRatio > zr.m ? "is larger" : "is smaller");
     if (Math.abs(d.base - zb.m) > Math.max(2.5, d.rowH * 0.14, 5 * zb.s)) reasons.push(d.base > zb.m ? "sits lower than the line" : "sits higher than the line");
-    if (reasons.length) flagged.push({ d, reasons });
+    // Size or baseline alone is common in genuine rows that mix fonts (bold labels, headings, small
+    // print). Ink, colour or sharpness differences — or a large size AND baseline shift — are not.
+    if (reasons.length) flagged.push({ d, reasons, strong: inkLike || (bigSize && bigBase) || reasons.length >= 3 });
   }
   // Many "odd" numbers means a layout/print quirk, not an edit.
   const real = flagged.length <= Math.max(2, deltas.length * 0.15) ? flagged : [];
 
   const g = TamperGrid.like(grid);
-  for (const { d, reasons } of real) {
+  for (const { d, reasons, strong } of real) {
     const w = d.f.word;
-    g.markRect(w.x, w.y, w.w, w.h, reasons.length >= 2 ? 0.9 : 0.7);
+    g.markRect(w.x, w.y, w.w, w.h, strong ? (reasons.length >= 2 ? 0.9 : 0.7) : 0.4);
     evidence.push({
       id: `glyph-${evidence.length}`,
       category: "glyph",
-      severity: "warning",
+      severity: strong ? "warning" : "info",
       title: `"${w.str}" doesn't match its row`,
       detail: `Compared with the rest of its row, "${w.str}" ${reasons.join(", ")}. Numbers typed or pasted in later often differ like this.`,
       regions: [{ x: w.x / W, y: w.y / H, w: w.w / W, h: w.h / H, label: w.str }],
@@ -200,6 +205,6 @@ export function analyzeGlyphs(canvas: HTMLCanvasElement, words: OcrWord[], grid:
       strength: g.max(),
     });
   }
-  checks.push({ id: "glyph", label: "Digit consistency", status: real.length ? "flag" : "pass", note: `${deltas.length} numbers compared with their rows` });
+  checks.push({ id: "glyph", label: "Digit consistency", status: real.some((r) => r.strong) ? "flag" : "pass", note: `${deltas.length} numbers compared with their rows` });
   return { evidence, layers, checks };
 }

@@ -10,10 +10,13 @@ const STATUS = {
   skip: { icon: MinusCircle, color: "#52525B", label: "not applicable" },
 } as const;
 
-function Row({ label, qr, printed }: { label: string; qr?: string; printed?: string }) {
-  const both = qr && printed;
-  const same = both && qr.toUpperCase().replace(/\s+/g, " ").trim() === printed.toUpperCase().replace(/\s+/g, " ").trim();
-  const color = !both ? "#71717A" : same ? "#39FF14" : "#FF3131";
+const squash = (v: string) => v.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+function Row({ label, qr, printed, missing }: { label: string; qr?: string; printed?: string; missing?: boolean }) {
+  const both = !!qr && !!printed;
+  const same = both && squash(qr!) === squash(printed!);
+  const color = missing ? "#FF3131" : !both ? "#71717A" : same ? "#39FF14" : "#FF3131";
+  printed = printed ?? (missing ? "(missing)" : undefined);
   return (
     <tr className="border-b border-[#1E1E22] last:border-0">
       <td className="py-1.5 pr-2 text-zinc-500">{label}</td>
@@ -78,17 +81,45 @@ export default function AIForensicPanel() {
                   </thead>
                   <tbody>
                     <Row label="Name" qr={fr.aadhaar.qr.name} printed={fr.aadhaar.printedName} />
-                    <Row label="DOB" qr={fr.aadhaar.qr.dob ?? fr.aadhaar.qr.yob} printed={fr.aadhaar.printedDob ?? fr.aadhaar.printedYob} />
-                    <Row label="Gender" qr={fr.aadhaar.qr.gender?.[0]} printed={fr.aadhaar.printedGender} />
+                    <Row
+                      label="DOB"
+                      qr={fr.aadhaar.qr.dob ?? fr.aadhaar.qr.yob}
+                      printed={fr.aadhaar.printedDob ?? fr.aadhaar.printedYob}
+                      missing={fr.evidence.some((e) => e.title === "Date of birth missing from the card")}
+                    />
+                    <Row label="Gender" qr={fr.aadhaar.qr.gender?.[0]} printed={fr.aadhaar.printedGender} missing={fr.evidence.some((e) => e.title === "Gender missing from the card")} />
                     <Row
                       label="Last 4"
                       qr={fr.aadhaar.qr.last4}
-                      printed={fr.aadhaar.printedNumbers[0]?.slice(-4) ?? fr.aadhaar.maskedLast4[0]}
+                      printed={
+                        fr.aadhaar.printedNumbers.map((n) => n.slice(-4)).find((l4) => l4 !== fr.aadhaar!.qr!.last4) ??
+                        fr.aadhaar.printedNumbers[0]?.slice(-4) ??
+                        fr.aadhaar.maskedLast4[0]
+                      }
                     />
+                    {fr.aadhaar.qr.pincode && <Row label="PIN code" qr={fr.aadhaar.qr.pincode} printed={fr.aadhaar.printedPincode} />}
+                    {fr.aadhaar.photo && fr.aadhaar.photo.verdict !== "not-compared" && (
+                      <tr className="border-b border-[#1E1E22] last:border-0">
+                        <td className="py-1.5 pr-2 text-zinc-500">Photo</td>
+                        <td className="py-1.5 pr-2 text-zinc-300 font-mono">signed photo</td>
+                        <td
+                          className="py-1.5 pr-2 font-mono"
+                          style={{ color: fr.aadhaar.photo.verdict === "match" ? "#39FF14" : fr.aadhaar.photo.verdict === "mismatch" ? "#FF3131" : "#FFB800" }}
+                        >
+                          {fr.aadhaar.photo.verdict === "match" ? "same photo" : fr.aadhaar.photo.verdict === "mismatch" ? "different photo" : "unclear"} ({fr.aadhaar.photo.score}%)
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               ) : (
-                <p className="text-[11px] text-zinc-500">QR not readable — upload the e-Aadhaar PDF or a sharper photo.</p>
+                <div className="text-[11px] text-zinc-500 space-y-1">
+                  <p>QR not readable (forwarded or small images are too blurry for it) — the e-Aadhaar PDF or a sharper photo allows the full check.</p>
+                  <p className="font-mono">
+                    DOB: <span className={fr.aadhaar.printedDob || fr.aadhaar.printedYob ? "text-[#39FF14]" : "text-[#FF3131]"}>{fr.aadhaar.printedDob ?? fr.aadhaar.printedYob ?? "not printed"}</span>
+                    {" · "}Gender: <span className={fr.aadhaar.printedGender ? "text-[#39FF14]" : "text-[#FF3131]"}>{fr.aadhaar.printedGender ?? "not printed"}</span>
+                  </p>
+                </div>
               )}
               {fr.aadhaar.numberValid !== undefined && (
                 <p className="text-[11px] mt-2" style={{ color: fr.aadhaar.numberValid ? "#39FF14" : "#FF3131" }}>
@@ -121,6 +152,38 @@ export default function AIForensicPanel() {
                     <span>{fr.marksheet.totalRow.join(" · ")}</span>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Grade card (credits / grade points / SGPA / CGPA) */}
+          {fr.gradeCard?.checked && (
+            <div className="p-3 bg-[#0D0D0F] border border-[#1E1E22]">
+              <div className="flex items-center gap-2 mb-2">
+                <GraduationCap className="w-3.5 h-3.5 text-[#9B59B6]" />
+                <span className="text-[10px] font-mono font-bold text-[#9B59B6] tracking-wider">GRADE CARD ARITHMETIC</span>
+                <span className="ml-auto text-[10px] font-mono" style={{ color: fr.gradeCard.consistent ? "#39FF14" : "#FF3131" }}>
+                  {fr.gradeCard.consistent ? "CONSISTENT" : "DOESN'T ADD UP"}
+                </span>
+              </div>
+              <div className="text-[11px] font-mono text-zinc-500 space-y-0.5">
+                {(
+                  [
+                    ["Semester", fr.gradeCard.semester, "SGPA"],
+                    ["Cumulative", fr.gradeCard.cumulative, "CGPA"],
+                  ] as const
+                ).map(([name, g, label]) =>
+                  g && g.CP !== undefined && (g.C || g.EC) ? (
+                    <div key={name} className="flex justify-between gap-3">
+                      <span>{name}: {g.CP} ÷ {g.C ?? g.EC}</span>
+                      <span>
+                        = {(g.CP / (g.C ?? g.EC)!).toFixed(2)} · card says {label}{" "}
+                        <span style={{ color: Math.abs(g.CP / (g.C ?? g.EC)! - (g.GPA ?? 0)) <= 0.011 ? "#39FF14" : "#FF3131" }}>{g.GPA}</span>
+                      </span>
+                    </div>
+                  ) : null
+                )}
+                {fr.gradeCard.courses.length > 0 && <div className="pt-1 text-zinc-600">{fr.gradeCard.courses.length} courses read (credits × grade points)</div>}
               </div>
             </div>
           )}

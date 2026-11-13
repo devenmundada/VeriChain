@@ -14,10 +14,12 @@
 import { analyzePdf, getPdfJs, renderPdfPage, PdfPasswordError, type PdfAnalysis } from "./forensics/pdfForensics";
 import { analyzePixels } from "./forensics/imageForensics";
 import { analyzeExif } from "./forensics/exifForensics";
-import { runOcr, type OcrWord } from "./forensics/ocr";
+import { ocrRegion, runOcr, type OcrWord } from "./forensics/ocr";
+import { buildLines } from "./forensics/textLines";
 import { readQRCodes, readQRCodesRobust, type QRHit } from "./forensics/qr";
 import { runAadhaarChecks, type AadhaarReport } from "./forensics/aadhaarChecks";
-import { checkMarksheet, looksLikeMarksheet, type MarksheetReport } from "./forensics/marksheet";
+import { checkGradeCard, checkMarksheet, looksLikeMarksheet, type GradeCardReport, type MarksheetReport } from "./forensics/marksheet";
+import { checkPrintedPhoto, decodeQrPhoto } from "./forensics/aadhaarPhoto";
 import { looksLikeAadhaar } from "./forensics/aadhaar";
 import { analyzeGlyphs } from "./forensics/glyphForensics";
 import { fuse } from "./forensics/fusion";
@@ -103,6 +105,7 @@ export interface ForensicResult {
   changes: { before: string; after: string; field?: string }[];
   aadhaar: AadhaarReport | null;
   marksheet: MarksheetReport | null;
+  gradeCard: GradeCardReport | null;
   pages: number;
   analysisMs: number;
   fingerprint: Fingerprint | null;
@@ -169,7 +172,8 @@ function evidenceToDetection(e: Evidence): Detection {
 }
 
 function detectDocType(text: string, qrs: QRHit[]): DocType {
-  if (looksLikeAadhaar(text) || qrs.some((q) => /^\d{200,}$/.test(q.text.trim()) || /PrintLetterBarcodeData/i.test(q.text))) return "aadhaar";
+  if (qrs.some((q) => /^\d{200,}$/.test(q.text.trim()) || /PrintLetterBarcodeData/i.test(q.text))) return "aadhaar";
+  if (looksLikeAadhaar(text)) return "aadhaar";
   if (looksLikeMarksheet(text)) return "marksheet";
   if (/certificate|certify|certified/i.test(text)) return "certificate";
   return "unknown";
@@ -339,7 +343,13 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
     // OCR confidence for the words that make up a printed value (number groups, a date, a year)
     const confFor = (needle: string) => {
       const digits = needle.replace(/\D/g, "");
-      if (!digits) return 0;
+      if (!digits) {
+        // a word (e.g. part of a name): the best-read OCR word with these letters
+        const n = needle.toUpperCase().replace(/[^A-Z]/g, "");
+        if (n.length < 2) return 0;
+        const ws = ocrWords.filter((w) => w.str.toUpperCase().replace(/[^A-Z]/g, "") === n);
+        return ws.length ? Math.max(...ws.map((w) => w.confidence)) : 0;
+      }
       const parts = digits.length === 12 ? [digits.slice(0, 4), digits.slice(4, 8), digits.slice(8)] : [digits];
       const ws = ocrWords.filter((w) => {
         const d = w.str.replace(/\D/g, "");
@@ -350,12 +360,118 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
     // OCR sometimes "reads" the QR pattern as words — drop text that sits inside a QR code
     const inQr = (b: TextBox) =>
       qrs.some((q) => b.x + b.w / 2 > q.box.x && b.x + b.w / 2 < q.box.x + q.box.w && b.y + b.h / 2 > q.box.y && b.y + b.h / 2 < q.box.y + q.box.h);
-    const aBoxes = textSource === "ocr" ? textBoxes.filter((b) => !inQr(b)) : textBoxes;
-    const aText = textSource === "ocr" ? aBoxes.map((b) => b.str).join(" ") : docText;
-    const a = await runAadhaarChecks(qrs, aBoxes, aText, textSource, render.width, render.height, confFor);
+    let aBoxes = textSource === "ocr" ? textBoxes.filter((b) => !inQr(b)) : textBoxes;
+    let aText = textSource === "ocr" ? aBoxes.map((b) => b.str).join(" ") : docText;
+    let a = await runAadhaarChecks(qrs, aBoxes, aText, textSource, render.width, render.height, confFor);
+
+    // Images: the small identity block next to the photo (name, DOB, gender) is often misread by
+    // the whole-page pass. Re-read the area above each printed number, enlarged, before deciding
+    // that a field is missing or different.
+    let rereadConfident = 0;
+    if (textSource === "ocr" && (!a.report.printedDob || !a.report.printedGender || !a.report.printedName)) {
+      progress("Re-reading the card's details (zoomed)");
+      const numLines = buildLines(aBoxes)
+        .filter((l) => /(?<!\d)[2-9]\d{3}\s?\d{4}\s?\d{4}(?!\d)/.test(l.text.replace(/VID\s*:?[\d\s]+/i, "")))
+        .sort((p, q) => q.y - p.y)
+        .slice(0, 3);
+      const W = render.width, H = render.height;
+      const regions = numLines.map((l) => {
+        const h = Math.min(H * 0.3, Math.max(H * 0.13, l.h * 10));
+        const x = Math.max(0, l.x - W * 0.12);
+        return { x, y: Math.max(0, l.y - h), w: Math.min(W - x, l.w + W * 0.3), h: Math.min(h, l.y) };
+      });
+      const extra: OcrWord[] = [];
+      const inside = (b: TextBox, r: { x: number; y: number; w: number; h: number }) => b.x + b.w / 2 > r.x && b.x + b.w / 2 < r.x + r.w && b.y + b.h / 2 > r.y && b.y + b.h / 2 < r.y + r.h;
+      for (const r of regions) {
+        try {
+          const ws = (await ocrRegion(withoutQr(render.canvas, qrs), r, { psm: "6" })).filter((w) => !inQr(w));
+          extra.push(...ws.map((w) => ({ ...w, str: w.str })));
+          rereadConfident += ws.filter((w) => w.confidence >= 80 && /[A-Za-z0-9]{3,}/.test(w.str)).length;
+        } catch {
+          /* keep the first pass */
+        }
+      }
+      if (extra.length) {
+        const kept = aBoxes.filter((b) => !regions.some((r) => inside(b, r)));
+        aBoxes = [...kept, ...extra];
+        ocrWords = [...ocrWords.filter((w) => !regions.some((r) => inside(w, r))), ...extra];
+        aText = aBoxes.map((b) => b.str).join(" ");
+        a = await runAadhaarChecks(qrs, aBoxes, aText, textSource, render.width, render.height, confFor);
+        textBoxes = aBoxes;
+        // "missing" from an image is only a hard finding if the zoomed re-read itself was clear
+        if (rereadConfident < 4)
+          for (const e of a.evidence) if (e.severity === "critical" && /missing/i.test(e.title)) e.severity = "warning";
+      }
+    }
     evidence.push(...a.evidence);
     checks.push(...a.checks);
     aadhaar = a.report;
+
+    // ── Printed photo vs the photo signed inside the QR ──
+    if (aadhaar.qr?.photo) {
+      progress("Comparing the photo with the one signed in the QR");
+      try {
+        const qp = await decodeQrPhoto(aadhaar.qr.photo);
+        const pc = qp
+          ? await checkPrintedPhoto(qp, render.canvas, { imageRects: pdfA?.imageRects, boxes: aBoxes, qrName: aadhaar.qr.name, qrBoxes: qrs.map((q) => q.box) })
+          : null;
+        const m = pc?.match;
+        if (m && pc.rect) {
+          const region = [{ x: pc.rect.x / render.width, y: pc.rect.y / render.height, w: pc.rect.w / render.width, h: pc.rect.h / render.height, label: "photo" }];
+          const score = Math.round(Math.max(0, m.pixel) * 100);
+          // embedded photo (PDF): same picture ≥ 0.9, another person ≤ 0.6. Found by search in an
+          // image: same picture ≥ 0.85, another person ≤ 0.45 (thresholds leave room for compression).
+          const okAt = pc.located ? 0.8 : 0.75;
+          const badAt = pc.located ? 0.62 : 0.45;
+          if (m.pixel >= okAt) {
+            aadhaar.photo = { score, verdict: "match" };
+            evidence.push({ id: "aad-photo", category: "aadhaar", severity: "pass", title: "Photo matches the signed QR photo", detail: `The printed photo lines up with the photo UIDAI signed inside the QR (similarity ${score}%). A swapped photo would not.` });
+            checks.push({ id: "aad-photo", label: "Photo vs QR photo", status: "pass", note: `${score}% similar` });
+          } else if (m.pixel < (pc.located ? badAt : 0.62) && m.edges < 0.5) {
+            aadhaar.photo = { score, verdict: "mismatch" };
+            const sure = m.pixel < badAt;
+            evidence.push({
+              id: "aad-photo",
+              category: "aadhaar",
+              severity: sure ? "critical" : "warning",
+              title: sure ? "Photo doesn't match the signed QR photo" : "Photo may not match the signed QR photo",
+              detail: sure
+                ? `The QR carries the holder's photo, signed by UIDAI. The photo printed on the card is a different picture (similarity only ${score}%) — the photo was replaced.`
+                : `The photo signed inside the QR and the photo found on the card look different (similarity ${score}%). The photo may have been replaced — compare them by eye.`,
+              regions: [...region.map((r) => ({ ...r, label: "photo ≠ QR photo" })), ...(qrs[0] ? [{ x: qrs[0].box.x / render.width, y: qrs[0].box.y / render.height, w: qrs[0].box.w / render.width, h: qrs[0].box.h / render.height, label: "signed QR" }] : [])],
+              layerId: "aadhaar",
+              change: { before: "photo in signed QR", after: "different photo printed", field: "Photo" },
+            });
+            checks.push({ id: "aad-photo", label: "Photo vs QR photo", status: "flag", note: `${score}% similar` });
+          } else {
+            aadhaar.photo = { score, verdict: "unsure" };
+            evidence.push({ id: "aad-photo", category: "aadhaar", severity: pc.located ? "warning" : "info", title: "Photo only partly matches the QR photo", detail: `The printed photo is only ${score}% similar to the photo signed inside the QR. Image quality can cause this; compare the two faces by eye.`, regions: region });
+            checks.push({ id: "aad-photo", label: "Photo vs QR photo", status: pc.located ? "flag" : "skip", note: `${score}% similar` });
+          }
+        } else {
+          aadhaar.photo = { score: 0, verdict: "not-compared", note: qp ? "photo not found on the card" : "QR photo couldn't be decoded" };
+          checks.push({ id: "aad-photo", label: "Photo vs QR photo", status: "skip", note: aadhaar.photo.note });
+        }
+      } catch {
+        checks.push({ id: "aad-photo", label: "Photo vs QR photo", status: "skip", note: "photo check unavailable" });
+      }
+    }
+
+    // Unlocking an e-Aadhaar (iLovePDF, Smallpdf…) re-saves it and removes UIDAI's signature. When the
+    // name, DOB, gender, number and photo all match the signed QR, that re-save alone isn't an edit.
+    if (aadhaar.qrMatches && aadhaar.photo?.verdict === "match" && !a.evidence.some((e) => e.severity === "critical")) {
+      for (let k = 0; k < evidence.length; k++) {
+        const e = evidence[k];
+        if (e.category === "metadata" && e.severity === "warning" && /editing tool|issuer's original/i.test(e.title)) {
+          evidence[k] = {
+            ...e,
+            severity: "info",
+            title: "Re-saved by another program",
+            detail: `${e.detail} Here the printed name, date of birth, gender, number and photo all match the UIDAI-signed QR, so the re-save (often done to remove the password) is not by itself a sign of editing. UIDAI's digital signature is no longer on this copy.`,
+          };
+        }
+      }
+    }
     const ag = TamperGrid.like(grid);
     for (const e of a.evidence) if (e.severity === "critical") for (const r of e.regions ?? []) ag.markRect(r.x * render.width, r.y * render.height, r.w * render.width, r.h * render.height, 1);
     if (ag.max() > 0) layers.push({ id: "aadhaar", label: "Aadhaar mismatch", color: "#FF3131", description: "Printed details that disagree with the signed QR or fail the check digit", grid: ag.data, critical: true, strength: 1 });
@@ -363,7 +479,8 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
 
   // ── Marksheet arithmetic ──
   let marksheet: MarksheetReport | null = null;
-  if (docType === "marksheet" || docType === "certificate" || /total/i.test(docText)) {
+  let gradeCard: GradeCardReport | null = null;
+  if (docType === "marksheet" || docType === "certificate" || /total|sgpa|cgpa/i.test(docText)) {
     progress("Checking that the marks add up");
     const m = checkMarksheet(textBoxes, render.width, render.height, docText);
     if (m.report.checked) {
@@ -373,7 +490,17 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
       const mg = TamperGrid.like(grid);
       for (const e of m.evidence) if (e.severity === "critical") for (const r of (e.regions ?? []).slice(0, 1)) mg.markRect(r.x * render.width, r.y * render.height, r.w * render.width, r.h * render.height, 0.9);
       if (mg.max() > 0) layers.push({ id: "marksheet", label: "Arithmetic", color: "#FF3131", description: "Totals or percentages that don't match the subject marks", grid: mg.data, critical: true, strength: 0.9 });
-    } else if (docType === "marksheet") {
+    }
+    const g = docType === "aadhaar" ? null : checkGradeCard(textBoxes, render.width, render.height);
+    if (g?.report.checked) {
+      evidence.push(...g.evidence);
+      gradeCard = g.report;
+      checks.push({ id: "grades", label: "SGPA / CGPA arithmetic", status: g.report.consistent ? "pass" : g.evidence.some((e) => e.severity === "critical") ? "flag" : "skip" });
+      const gg = TamperGrid.like(grid);
+      for (const e of g.evidence) if (e.severity === "critical") for (const r of (e.regions ?? []).slice(0, 1)) gg.markRect(r.x * render.width, r.y * render.height, r.w * render.width, r.h * render.height, 0.9);
+      if (gg.max() > 0) layers.push({ id: "gradecard", label: "Grade arithmetic", color: "#FF3131", description: "SGPA/CGPA or credit points that don't follow from the grades", grid: gg.data, critical: true, strength: 0.9 });
+    }
+    if (!m.report.checked && !g?.report.checked && docType === "marksheet") {
       checks.push({ id: "marks", label: "Marks arithmetic", status: "skip", note: "table not recognised" });
     }
   }
@@ -429,14 +556,15 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
   let idMask: Uint8Array | undefined;
   if (idCard) {
     idMask = new Uint8Array(grid.data.length);
-    const nameTokens = (aadhaar?.qr?.name ?? "").toUpperCase().split(/\s+/).filter((t) => t.length >= 3);
-    const isIdField = (b: TextBox) => {
-      const t = b.str.toUpperCase();
-      return /\d{2,}/.test(t) || /\b(FE)?MALE\b|TRANSGENDER|D[O0][B8]|BIRTH/.test(t) || nameTokens.some((n) => t.includes(n));
-    };
     const m = TamperGrid.like(grid);
-    for (const b of textBoxes) if (isIdField(b)) m.markRect(b.x - grid.cellW, b.y - grid.cellH, b.w + 2 * grid.cellW, b.h + 2 * grid.cellH, 1);
-    for (const e of evidence) if (e.category === "aadhaar" && e.severity === "critical") for (const r of e.regions ?? []) if (r.label !== "signed QR") m.markRect(r.x * render.width, r.y * render.height, r.w * render.width, r.h * render.height, 1);
+    const pad = (x: number, y: number, w: number, h: number) => m.markRect(x - grid.cellW, y - grid.cellH, w + 2 * grid.cellW, h + 2 * grid.cellH, 1);
+    // identity fields only: the name, date of birth, gender and Aadhaar number lines found by the
+    // Aadhaar checks (not the VID, enrolment number or address)
+    for (const r of aadhaar?.fields ?? []) pad(r.x, r.y, r.w, r.h);
+    // where a field is missing or the photo differs
+    for (const e of evidence)
+      if (e.category === "aadhaar" && e.severity === "critical")
+        for (const r of e.regions ?? []) if (r.label !== "signed QR") m.markRect(r.x * render.width, r.y * render.height, r.w * render.width, r.h * render.height, 1);
     for (let k = 0; k < m.data.length; k++) idMask[k] = m.data[k] > 0 ? 1 : 0;
   }
   const f = fuse(grid, layers, evidence, checks, { lowContent, idCard, idVerifiable, idMask });
@@ -469,6 +597,7 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
     changes: f.changes,
     aadhaar,
     marksheet,
+    gradeCard,
     pages: pdfA?.numPages ?? 1,
     analysisMs: Math.round(performance.now() - t0),
     fingerprint,
@@ -503,6 +632,7 @@ function emptyResult(file: File, title: string, summary: string, t0: number): Fo
     changes: [],
     aadhaar: null,
     marksheet: null,
+    gradeCard: null,
     pages: 0,
     analysisMs: Math.round(performance.now() - t0),
     fingerprint: null,

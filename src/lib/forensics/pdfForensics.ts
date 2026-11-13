@@ -23,6 +23,7 @@ import {
   TamperGrid,
   pxToRegion,
 } from "./types";
+import { buildLines, charEdges, linesText } from "./textLines";
 
 type PdfJs = typeof import("pdfjs-dist");
 
@@ -284,9 +285,9 @@ function coveredSubstring(under: TextBox, over: TextBox) {
   const n = under.str.length;
   if (n <= 1) return under.str.trim();
   let i0 = -1, i1 = -1;
+  const edges = charEdges(under.str, under.x, under.w);
   for (let i = 0; i < n; i++) {
-    const cx0 = under.x + (under.w * i) / n;
-    const cx1 = under.x + (under.w * (i + 1)) / n;
+    const cx0 = edges[i], cx1 = edges[i + 1];
     const ov = Math.min(cx1, over.x + over.w) - Math.max(cx0, over.x);
     if (ov > (cx1 - cx0) * 0.4) {
       if (i0 < 0) i0 = i;
@@ -312,6 +313,75 @@ function normText(s: string) {
   return s.replace(/\s+/g, " ").trim();
 }
 
+const INDIC_RE = /[ऀ-෿]/;
+
+/** A covered character range of a text box and what is drawn there instead ("" = blank). */
+interface CharEdit {
+  i0: number;
+  i1: number;
+  text: string;
+}
+
+/** Characters of `under` that `over` sits on (proportional-width estimate), or null. */
+function coveredRange(under: TextBox, over: TextBox, minShare = 0.4): { i0: number; i1: number } | null {
+  const n = under.str.length;
+  if (!n) return null;
+  if (over.y > under.y + under.h * 0.85 || over.y + over.h < under.y + under.h * 0.15) return null;
+  let i0 = -1, i1 = -1;
+  const edges = charEdges(under.str, under.x, under.w);
+  for (let i = 0; i < n; i++) {
+    const cx0 = edges[i], cx1 = edges[i + 1];
+    const ov = Math.min(cx1, over.x + over.w) - Math.max(cx0, over.x);
+    if (ov > (cx1 - cx0) * minShare) {
+      if (i0 < 0) i0 = i;
+      i1 = i;
+    }
+  }
+  return i0 < 0 ? null : { i0, i1 };
+}
+
+/** The whitespace-delimited words that overlap characters i0..i1. */
+function wordsIn(s: string, i0: number, i1: number): { i0: number; i1: number }[] {
+  const out: { i0: number; i1: number }[] = [];
+  for (const m of s.matchAll(/\S+/g)) {
+    const a = m.index ?? 0, b = a + m[0].length - 1;
+    if (b >= i0 && a <= i1) out.push({ i0: a, i1: b });
+  }
+  return out;
+}
+
+/** The whitespace-delimited word that contains characters i0..i1. */
+function wordAround(s: string, i0: number, i1: number): { i0: number; i1: number } | null {
+  if (i0 < 0 || i1 >= s.length) return null;
+  let a = i0, b = i1;
+  while (a > 0 && !/\s/.test(s[a - 1])) a--;
+  while (b < s.length - 1 && !/\s/.test(s[b + 1])) b++;
+  return { i0: a, i1: b };
+}
+
+/** The string as it looks on the page after the edits (covered characters replaced). */
+function applyEdits(s: string, edits: CharEdit[]): string {
+  const sorted = [...edits].sort((a, b) => a.i0 - b.i0);
+  let out = "";
+  let pos = 0;
+  for (const e of sorted) {
+    if (e.i0 < pos) continue;
+    out += s.slice(pos, e.i0) + e.text;
+    pos = e.i1 + 1;
+  }
+  return out + s.slice(pos);
+}
+
+/** What the word around `word` reads on the page after the edits. */
+function visibleSlice(s: string, edits: CharEdit[], word: { i0: number; i1: number }): string {
+  const mark = "\u0001";
+  const marked = s.slice(0, word.i0) + mark + s.slice(word.i0, word.i1 + 1) + mark + s.slice(word.i1 + 1);
+  const shifted = edits.map((e) => ({ ...e, i0: e.i0 + (e.i0 >= word.i0 ? 1 : 0) + (e.i0 > word.i1 ? 1 : 0), i1: e.i1 + (e.i1 >= word.i0 ? 1 : 0) + (e.i1 > word.i1 ? 1 : 0) }));
+  const out = applyEdits(marked, shifted);
+  const a = out.indexOf(mark), b = out.indexOf(mark, a + 1);
+  return (a >= 0 && b > a ? out.slice(a + 1, b) : out).replace(/\s+/g, " ").trim();
+}
+
 function parsePdfDate(s?: string): Date | null {
   if (!s) return null;
   const m = s.match(/D?:?(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?([Z+-])?(\d{2})?'?(\d{2})?/);
@@ -335,7 +405,10 @@ export interface PdfAnalysis {
   /** where embedded images (logos, photos, QR codes) are drawn on page 1, in render pixels */
   imageRects: { x: number; y: number; w: number; h: number }[];
   render: PageRender;
+  /** page-1 text as it looks on the page (covered characters replaced, hidden text removed) */
   textBoxes: TextBox[];
+  /** page-1 text layer exactly as stored in the file */
+  rawTextBoxes: TextBox[];
   evidence: Evidence[];
   layers: TamperLayer[];
   checks: CheckRun[];
@@ -373,7 +446,7 @@ export async function analyzePdf(
 
   progress("Reading text layer");
   const { boxes, fonts } = await extractTextBoxes(final);
-  const docTextParts: string[] = [boxes.map((b) => b.str).join(" ")];
+  const docTextParts: string[] = [];
   for (let p = 2; p <= Math.min(numPages, 3); p++) {
     try {
       const pg = await doc.getPage(p);
@@ -383,7 +456,7 @@ export async function analyzePdf(
       /* ignore */
     }
   }
-  const docText = docTextParts.join("\n");
+  const otherPagesText = docTextParts.join("\n");
   const isScanned = boxes.length < 5;
 
   // ── 1. Metadata ──
@@ -449,23 +522,37 @@ export async function analyzePdf(
     checks.push({ id: "pdf-meta", label: "PDF metadata", status: "skip", note: "unreadable" });
   }
 
+  // Visible-text model: covered character ranges per text box, and boxes merged into the
+  // text they were drawn over. Filled by the text-layer and annotation checks below.
+  const edits = new Map<number, CharEdit[]>();
+  const consumed = new Set<number>();
+  const addEdit = (i: number, e: CharEdit) => {
+    if (!edits.has(i)) edits.set(i, []);
+    edits.get(i)!.push(e);
+  };
+
   // ── 2. Text layer: overlapping strings and hidden text ──
+  // Every finding here also edits the "visible text" model: what a person actually sees on the
+  // page. Aadhaar and marksheet checks read the visible text, not the raw text layer.
   progress("Looking for hidden or overlapping text");
   const textLayerGrid = TamperGrid.like(grid);
   let textFlags = 0;
   if (!isScanned) {
     const { lum } = luminanceData(final.render.canvas);
     const reported = new Set<string>();
-    // Only Latin letters/digits: Indic scripts (Hindi on Aadhaar) are often extracted as
-    // overlapping glyph clusters, which is not an edit.
-    const checkable = (t: string) => /[A-Za-z0-9]{2,}|^\d$/.test(t) && !/[\u0900-\u0DFF]/.test(t);
-    const order = boxes.map((_, i) => i);
-    for (let a = 0; a < order.length; a++) {
+    // one finding per overlaid text: it may cover several words of the original
+    const byOver = new Map<number, Evidence>();
+    // Latin letters/digits only: Indic scripts (Hindi on Aadhaar) are often extracted as
+    // overlapping glyph clusters, which is not an edit. A box that mixes Hindi and Latin
+    // ("जन्म तारीख/DOB: 01/01/1990") is checked on the part that was covered.
+    const latin = (t: string) => /[A-Za-z0-9]{2,}|^\s*\d\s*$/.test(t) && !INDIC_RE.test(t);
+    const hasLatin = (t: string) => /[A-Za-z0-9]/.test(t);
+    for (let a = 0; a < boxes.length; a++) {
       const A = boxes[a];
-      if (!checkable(A.str)) continue;
-      for (let b = a + 1; b < order.length; b++) {
+      if (!hasLatin(A.str)) continue;
+      for (let b = a + 1; b < boxes.length; b++) {
         const B = boxes[b];
-        if (!checkable(B.str)) continue;
+        if (!latin(B.str)) continue;
         if (B.y > A.y + A.h || A.y > B.y + B.h) continue;
         const inter = intersect(A, B);
         if (inter <= 0) continue;
@@ -473,14 +560,53 @@ export async function analyzePdf(
         if (inter / minArea < 0.45) continue;
         const sa = normText(A.str), sb = normText(B.str);
         if (sa === sb) continue; // fake-bold / shadow text draws the same string twice
+        const cov0 = coveredRange(A, B);
+        if (!cov0) continue;
+        // a retyped value usually covers almost all of the old word — take the whole word
+        const cov = { ...cov0 };
+        for (const wd of wordsIn(A.str, cov0.i0, cov0.i1)) {
+          const covered = Math.min(cov0.i1, wd.i1) - Math.max(cov0.i0, wd.i0) + 1;
+          if (covered / (wd.i1 - wd.i0 + 1) >= 0.6) {
+            cov.i0 = Math.min(cov.i0, wd.i0);
+            cov.i1 = Math.max(cov.i1, wd.i1);
+          }
+        }
+        const coveredStr = A.str.slice(cov.i0, cov.i1 + 1).trim();
+        if (!latin(A.str) && !/^[A-Za-z0-9.,/:%-]+$/.test(coveredStr)) continue;
         if (sa.includes(sb) && A.w * A.h > B.w * B.h * 3 && coveredSubstring(A, B) === sb) continue;
+        if (coveredStr === sb) continue; // same characters drawn twice (bold / outline)
         // later-drawn (b) sits on top of earlier (a)
         const after = sb;
         const before = focusBefore(coveredSubstring(A, B), after);
         const key = `${before}|${after}|${Math.round(B.x)}|${Math.round(B.y)}`;
         if (reported.has(key)) continue;
         reported.add(key);
+        // the same overlaid text over a further word: blank that word, extend the first finding
+        const prior = byOver.get(b);
+        if (prior) {
+          addEdit(a, { i0: cov.i0, i1: cov.i1, text: "" });
+          const w2 = A.str.slice(cov.i0, cov.i1 + 1).trim();
+          if (prior.change) prior.change.before = `${prior.change.before} ${w2}`.trim();
+          prior.detail = prior.detail.replace(/^The file still contains "([^"]*)"/, (_m, w) => `The file still contains "${w} ${w2}"`);
+          const r = prior.regions?.[0];
+          if (r) {
+            const x1 = Math.max(r.x + r.w, (A.x + A.w) / W), y1 = Math.max(r.y + r.h, (A.y + A.h) / H);
+            r.x = Math.min(r.x, A.x / W);
+            r.y = Math.min(r.y, A.y / H);
+            r.w = x1 - r.x;
+            r.h = y1 - r.y;
+            r.label = `${prior.change?.before} → ${prior.change?.after}`;
+          }
+          textLayerGrid.markRect(A.x, A.y, A.w, A.h, 1);
+          continue;
+        }
         textFlags++;
+        const edit = { i0: cov.i0, i1: cov.i1, text: B.str };
+        addEdit(a, edit);
+        consumed.add(b);
+        const word = wordAround(A.str, cov.i0, cov.i1) ?? { i0: cov.i0, i1: cov.i1 };
+        const shownBefore = A.str.slice(word.i0, word.i1 + 1).trim() || before;
+        const visibleWord = visibleSlice(A.str, [edit], word) || after;
         const rx = Math.min(A.x, B.x), ry = Math.min(A.y, B.y);
         const rw = Math.max(A.x + A.w, B.x + B.w) - rx, rh = Math.max(A.y + A.h, B.y + B.h) - ry;
         textLayerGrid.markRect(rx, ry, rw, rh, 1);
@@ -488,24 +614,26 @@ export async function analyzePdf(
           category: "pdf-text",
           severity: "critical",
           title: "Text written over other text",
-          detail: `The file still contains "${before}" underneath, with "${after}" drawn on top of it at the same spot. Editors do this when they cover old text and type new text.`,
-          regions: [pxToRegion(rx, ry, rw, rh, W, H, `${before} → ${after}`)],
+          detail: `The file still contains "${shownBefore}" underneath, with "${after}" drawn on top of it at the same spot${visibleWord !== after ? ` — the page now shows "${visibleWord}"` : ""}. Editors do this when they cover old text and type new text.`,
+          regions: [pxToRegion(rx, ry, rw, rh, W, H, `${shownBefore} → ${visibleWord}`)],
           layerId: "pdf-text",
-          change: { before, after },
+          change: { before: shownBefore, after: visibleWord },
         });
+        byOver.set(b, evidence[evidence.length - 1]);
       }
     }
     // Hidden: text present in the file but not visible on the page
-    const hidden: TextBox[] = [];
-    for (const b of boxes) {
-      if (b.w < 2 || b.h < 4 || !checkable(b.str)) continue;
+    const hidden: { b: TextBox; i: number }[] = [];
+    boxes.forEach((b, i) => {
+      if (b.w < 2 || b.h < 4 || !latin(b.str) || consumed.has(i)) return;
       const ink = boxInk(lum, W, H, b);
-      if (ink.contrast < 18) hidden.push(b);
-    }
+      if (ink.contrast < 18) hidden.push({ b, i });
+    });
     const hiddenRatio = hidden.length / Math.max(1, boxes.length);
     if (hidden.length > 0 && hiddenRatio < 0.5) {
-      for (const b of hidden.slice(0, 12)) {
+      for (const { b, i } of hidden.slice(0, 12)) {
         textFlags++;
+        addEdit(i, { i0: 0, i1: b.str.length - 1, text: "" });
         textLayerGrid.markRect(b.x, b.y, b.w, b.h, 0.95);
         ev({
           category: "pdf-text",
@@ -517,6 +645,45 @@ export async function analyzePdf(
           change: { before: normText(b.str), after: "(covered)" },
         });
       }
+    }
+    // Partly hidden: some digits of a visible number or date have no ink (a small white box over them)
+    if (hiddenRatio < 0.5) {
+      boxes.forEach((b, i) => {
+        if (consumed.has(i) || edits.has(i) || b.h < 6 || b.w < 8) return;
+        const s = b.str;
+        if (!/\d/.test(s) || s.length < 4) return;
+        if (boxInk(lum, W, H, b).contrast < 60) return;
+        const edges = charEdges(s, b.x, b.w);
+        let run0 = -1;
+        let best: { i0: number; i1: number } | null = null;
+        for (let c = 0; c <= s.length; c++) {
+          const isDigit = c < s.length && /\d/.test(s[c]);
+          const cw = c < s.length ? edges[c + 1] - edges[c] : 0;
+          const blank = isDigit && boxInk(lum, W, H, { ...b, x: edges[c] + cw * 0.2, w: cw * 0.6 }).contrast < 14;
+          if (blank) {
+            if (run0 < 0) run0 = c;
+          } else {
+            if (run0 >= 0 && c - run0 >= 2 && (!best || c - 1 - run0 > best.i1 - best.i0)) best = { i0: run0, i1: c - 1 };
+            run0 = -1;
+          }
+        }
+        if (!best) return;
+        textFlags++;
+        const edit = { i0: best.i0, i1: best.i1, text: "" };
+        addEdit(i, edit);
+        const gone = s.slice(best.i0, best.i1 + 1);
+        const rx = edges[best.i0], rw = edges[best.i1 + 1] - edges[best.i0];
+        textLayerGrid.markRect(rx, b.y, rw, b.h, 0.95);
+        ev({
+          category: "pdf-text",
+          severity: "critical",
+          title: "Part of the text is covered",
+          detail: `The file says "${normText(s)}", but the digits "${gone}" can't be seen on the page — they were covered (for example with a white box).`,
+          regions: [pxToRegion(rx, b.y, rw, b.h, W, H, `covered: ${gone}`)],
+          layerId: "pdf-text",
+          change: { before: normText(s), after: normText(applyEdits(s, [edit])) || "(covered)" },
+        });
+      });
     }
     checks.push({ id: "pdf-text", label: "Hidden / overlapping text", status: textFlags ? "flag" : "pass" });
   } else {
@@ -543,24 +710,64 @@ export async function analyzePdf(
     );
     const widgets = annots.filter((a: { subtype?: string; fieldType?: string }) => a.subtype === "Widget" && a.fieldType !== "Sig");
     const annotGrid = TamperGrid.like(grid);
-    for (const a of editLike as { subtype: string; rect: number[]; contentsObj?: { str?: string } }[]) {
+    type Annot = { subtype: string; rect: number[]; contentsObj?: { str?: string } };
+    const placed = (editLike as Annot[]).map((a) => {
       const [x1, y1, x2, y2] = final.convertRect(a.rect);
-      const rx = Math.min(x1, x2), ry = Math.min(y1, y2), rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1);
-      annotGrid.markRect(rx, ry, rw, rh, 0.9);
-      const covered = boxes.filter(
-        (b) => intersect(b, { str: "", x: rx, y: ry, w: rw, h: rh, source: "pdf" }) > b.w * b.h * 0.4
-      );
-      ev({
-        category: "pdf-structure",
-        severity: covered.length ? "critical" : "warning",
-        title: covered.length ? "Annotation placed over existing text" : "Content added as an annotation",
-        detail: covered.length
-          ? `A ${a.subtype} annotation covers "${covered.map((c) => normText(c.str)).join(" ")}"${a.contentsObj?.str ? ` and shows "${a.contentsObj.str}"` : ""}. Online PDF editors add edits this way.`
-          : `A ${a.subtype} annotation was added on top of the page — online PDF editors add text and white-out boxes this way.`,
-        regions: [pxToRegion(rx, ry, rw, rh, W, H, a.subtype)],
-        layerId: "pdf-annot",
-        change: covered.length ? { before: covered.map((c) => normText(c.str)).join(" "), after: a.contentsObj?.str || "(covered)" } : undefined,
-      });
+      const r = { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) };
+      // which characters of which text boxes this annotation sits on
+      const hits: { i: number; i0: number; i1: number }[] = [];
+      if (r.w * r.h < W * H * 0.05) {
+        boxes.forEach((b, i) => {
+          if (consumed.has(i)) return;
+          const cov = coveredRange(b, { str: "", ...r, source: "pdf" }, 0.6);
+          if (cov && /\S/.test(b.str.slice(cov.i0, cov.i1 + 1))) hits.push({ i, ...cov });
+        });
+      }
+      return { a, r, hits, text: (a.contentsObj?.str ?? "").trim() };
+    });
+    // A text annotation and a white box at the same spot are one edit: the box hides, the text replaces.
+    for (const p of placed) {
+      annotGrid.markRect(p.r.x, p.r.y, p.r.w, p.r.h, 0.9);
+      const replaces = p.a.subtype === "FreeText" ? p.text : "";
+      const covers = ["FreeText", "Square", "Stamp", "Redact"].includes(p.a.subtype);
+      if (covers)
+        for (const h of p.hits) {
+          const has = edits.get(h.i)?.find((e) => e.i0 <= h.i1 && h.i0 <= e.i1);
+          if (has) {
+            if (replaces) has.text = replaces;
+          } else addEdit(h.i, { i0: h.i0, i1: h.i1, text: replaces });
+        }
+    }
+    for (const p of placed) {
+      const { a, r, hits } = p;
+      const twin = placed.find((q) => q !== p && intersect({ str: "", ...q.r, source: "pdf" }, { str: "", ...r, source: "pdf" }) > Math.min(q.r.w * q.r.h, r.w * r.h) * 0.5);
+      if (twin && a.subtype !== "FreeText" && twin.a.subtype === "FreeText" && twin.hits.length) continue; // reported with its text
+      if (hits.length) {
+        const h = hits[0];
+        const b = boxes[h.i];
+        const word = wordAround(b.str, h.i0, h.i1) ?? { i0: h.i0, i1: h.i1 };
+        const before = b.str.slice(word.i0, word.i1 + 1).trim();
+        const afterWord = visibleSlice(b.str, edits.get(h.i) ?? [], word);
+        const shown = p.text || twin?.text;
+        ev({
+          category: "pdf-structure",
+          severity: "critical",
+          title: "Annotation placed over existing text",
+          detail: `A ${a.subtype}${twin ? ` and a ${twin.a.subtype}` : ""} annotation sit on "${before}"${shown ? ` and show "${shown}" instead` : ""} — the page now reads "${afterWord || "(blank)"}", while the file's own text still says "${before}". Online PDF editors make edits this way.`,
+          regions: [pxToRegion(r.x - 2, r.y - 2, r.w + 4, r.h + 4, W, H, `${before} → ${afterWord || "∅"}`)],
+          layerId: "pdf-annot",
+          change: { before, after: afterWord || "(covered)" },
+        });
+      } else {
+        ev({
+          category: "pdf-structure",
+          severity: "warning",
+          title: "Content added as an annotation",
+          detail: `A ${a.subtype} annotation${p.text ? ` showing "${p.text}"` : ""} was added on top of the page — online PDF editors add text and white-out boxes this way.`,
+          regions: [pxToRegion(r.x, r.y, r.w, r.h, W, H, a.subtype)],
+          layerId: "pdf-annot",
+        });
+      }
     }
     if (widgets.length) {
       ev({
@@ -599,11 +806,12 @@ export async function analyzePdf(
     }
     const totalChars = boxes.reduce((s, b) => s + b.str.length, 0);
     const medianH = [...boxes.map((b) => b.h)].sort((a, b) => a - b)[boxes.length >> 1] ?? 0;
-    // same base font, different subset tags
+    // the very same font (same name, weight and style) embedded under different subset tags —
+    // Regular and Bold of one family are different fonts and are not compared
     const byBase = new Map<string, FontInfo[]>();
     for (const f of fonts.values()) {
       if (!f.subsetTag) continue;
-      const k = f.base.toLowerCase();
+      const k = f.name.replace(/^[A-Z]{6}\+/, "").toLowerCase();
       if (!byBase.has(k)) byBase.set(k, []);
       byBase.get(k)!.push(f);
     }
@@ -843,10 +1051,22 @@ export async function analyzePdf(
     /* operator list unavailable — no exclusions */
   }
 
+  // ── What a person sees: covered characters replaced, hidden text dropped ──
+  const visibleBoxes: TextBox[] = [];
+  boxes.forEach((b, i) => {
+    if (consumed.has(i)) return;
+    const e = edits.get(i);
+    if (!e) return visibleBoxes.push(b);
+    const str = applyEdits(b.str, e);
+    if (str.trim()) visibleBoxes.push({ ...b, str });
+  });
+  const docText = [linesText(buildLines(visibleBoxes)), otherPagesText].filter(Boolean).join("\n");
+
   return {
     imageRects,
     render: final.render,
-    textBoxes: boxes,
+    textBoxes: visibleBoxes,
+    rawTextBoxes: boxes,
     evidence,
     layers,
     checks,

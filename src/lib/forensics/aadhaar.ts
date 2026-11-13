@@ -11,6 +11,8 @@
  * Pure functions here have no DOM dependency so they can be unit-tested in Node.
  */
 
+import { findQrPhoto } from "./photoMatch";
+
 export interface AadhaarQR {
   kind: "secure" | "xml";
   version?: string;
@@ -25,8 +27,12 @@ export interface AadhaarQR {
   state?: string;
   pincode?: string;
   vtc?: string;
+  postOffice?: string;
+  subDistrict?: string;
   referenceId?: string;
   hasSignature: boolean;
+  /** JPEG 2000 photo signed inside the Secure QR (V2+), if present */
+  photo?: Uint8Array;
 }
 
 // ── Verhoeff ──
@@ -192,7 +198,10 @@ export async function parseAadhaarQR(text: string): Promise<AadhaarQR | null> {
     pincode: f(10),
     state: f(12),
     vtc: f(15),
+    postOffice: f(11),
+    subDistrict: f(14),
     hasSignature: raw.length > 256,
+    photo: findQrPhoto(raw) ?? undefined,
   };
 }
 
@@ -261,8 +270,10 @@ export function findPrintedGender(text: string): string | undefined {
   return undefined;
 }
 
+/** Words only an Aadhaar carries. "Government of India" or "Enrolment No." alone are not enough —
+ *  university marksheets print "ENROLLMENT NO." too. */
 export function looksLikeAadhaar(text: string) {
-  if (/aadhaar|aadhar|uidai|unique identification authority|आधार|enrolment\s*no|enrollment\s*no|mera aadhaar|government of india|\bVID\s*:/i.test(text)) return true;
+  if (/aadhaar|aadhar|uidai|unique\s+identification\s+authority|आधार|\bVID\s*:?\s*\d{4}\s?\d{4}\s?\d{4}\s?\d{4}/i.test(text)) return true;
   // a 12-digit number printed in 4-4-4 groups next to a birth-date label
-  return findAadhaarNumbers(text).length > 0 && /D[O0Q][B8]|Date\s*of\s*Birth|Year\s*of\s*Birth/i.test(text);
+  return /\b[2-9]\d{3}\s\d{4}\s\d{4}\b/.test(text) && /D[O0Q][B8]|Date\s*of\s*Birth|Year\s*of\s*Birth|जन्म/i.test(text) && /\b(FE)?MALE\b|पुरुष|महिला/i.test(text);
 }
