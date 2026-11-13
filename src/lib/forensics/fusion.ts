@@ -88,7 +88,7 @@ export function fuse(
   layers: TamperLayer[],
   evidenceIn: Evidence[],
   checks: CheckRun[],
-  opts: { lowContent?: boolean; idCard?: boolean; idVerifiable?: boolean; idMask?: Uint8Array } = {}
+  opts: { lowContent?: boolean; idCard?: boolean; idVerifiable?: boolean; idMask?: Uint8Array; smallImage?: boolean } = {}
 ): FusionResult {
   const fused = TamperGrid.like(grid);
   const C = fused.cols, R = fused.rows;
@@ -210,7 +210,7 @@ export function fuse(
     title = warn.length >= 3 ? "Likely edited" : "Suspicious — check the flagged areas";
   } else if (opts.idCard && opts.idVerifiable === false) {
     verdict = "INCONCLUSIVE";
-    title = "Couldn't verify — QR not readable";
+    title = opts.smallImage ? "Couldn't verify — image too small" : "Couldn't verify — QR not readable";
   } else if (ran < 3 || opts.lowContent) {
     verdict = "INCONCLUSIVE";
     title = "Not enough evidence to judge";
@@ -246,7 +246,9 @@ export function fuse(
 
   const changes = ev.filter((e) => e.change && e.severity === "critical").map((e) => e.change!);
   const summary =
-    verdict === "INCONCLUSIVE" && opts.idCard && opts.idVerifiable === false
+    verdict === "INCONCLUSIVE" && opts.idCard && opts.idVerifiable === false && opts.smallImage
+      ? "No signs of editing were found in what could be read, but this image is too small (forwarded or downsized) to read the card's digits and QR reliably — so it can't be verified. Upload the e-Aadhaar PDF, or a sharper photo where the text and QR are clear."
+      : verdict === "INCONCLUSIVE" && opts.idCard && opts.idVerifiable === false
       ? "The Aadhaar QR code couldn't be read, so the strongest check (UIDAI-signed QR vs printed details) didn't run — and pixel statistics aren't reliable on ID cards. Upload the e-Aadhaar PDF, or a larger, sharper image where the QR is clearly visible."
       : buildSummary(verdict, crit, warn, pass);
 

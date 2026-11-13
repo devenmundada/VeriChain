@@ -897,8 +897,12 @@ export async function analyzePdf(
   // - no signature → diff the oldest version against the final one
   const lastSig = [...structure.signatures].sort((a, b) => b.signedEnd - a.signedEnd)[0];
   let target: number | null = null;
+  // Signed bytes that end at a saved version (%%EOF) = later data was appended. Otherwise the
+  // whole file was rewritten after signing (e.g. a tool that removes the password).
+  const appendedAfterSig = !!lastSig && structure.eofOffsets.some((e) => Math.abs(e - lastSig.signedEnd) < 64);
+  const rewrittenAfterSig = !!lastSig && !lastSig.coversEnd && !appendedAfterSig;
   if (lastSig) {
-    if (!lastSig.coversEnd && lastSig.signedEnd > 200 && lastSig.signedEnd < bytes.length - 10) target = lastSig.signedEnd;
+    if (!lastSig.coversEnd && appendedAfterSig && lastSig.signedEnd > 200 && lastSig.signedEnd < bytes.length - 10) target = lastSig.signedEnd;
   } else {
     const prevEnds = structure.revisionEnds.slice(0, -1).filter((e) => e > 200 && e < bytes.length - 10);
     if (prevEnds.length) target = prevEnds[0]; // the oldest version = closest to the original
@@ -985,8 +989,8 @@ export async function analyzePdf(
     checks.push({
       id: "pdf-rev",
       label: "Hidden earlier versions",
-      status: "pass",
-      note: lastSig ? "signed — nothing added after signing" : structure.revisionEnds.length > 1 ? `${structure.revisionEnds.length} saves` : "single save",
+      status: rewrittenAfterSig ? "skip" : "pass",
+      note: rewrittenAfterSig ? "file rewritten after signing" : lastSig ? "signed — nothing added after signing" : structure.revisionEnds.length > 1 ? `${structure.revisionEnds.length} saves` : "single save",
     });
   }
 
@@ -1000,6 +1004,13 @@ export async function analyzePdf(
         severity: "pass",
         title: "Digitally signed, nothing added after signing",
         detail: `Signature${sigLabel ? ` by ${sigLabel}` : ""} covers the whole file. (The signer's certificate isn't checked in this version.)`,
+      });
+    } else if (rewrittenAfterSig) {
+      ev({
+        category: "pdf-structure",
+        severity: "warning",
+        title: "Re-saved after signing",
+        detail: `The whole file was rewritten by another program after it was signed${sigLabel ? ` (${sigLabel})` : ""} — for example a tool that removes the password — so the digital signature no longer matches it. The content may be unchanged, but the signature can no longer vouch for it.`,
       });
     } else if (postSignatureUnchanged) {
       ev({

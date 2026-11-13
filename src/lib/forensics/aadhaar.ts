@@ -270,10 +270,23 @@ export function findPrintedGender(text: string): string | undefined {
   return undefined;
 }
 
-/** Words only an Aadhaar carries. "Government of India" or "Enrolment No." alone are not enough —
- *  university marksheets print "ENROLLMENT NO." too. */
+/** Is this an Aadhaar? Strong words decide on their own; otherwise several weak clues must agree.
+ *  "Government of India" or "Enrolment No." alone are not enough — marksheets print "ENROLLMENT NO." too. */
+export function aadhaarScore(text: string) {
+  let score = 0;
+  if (/aadhaar|aadhar|adhaar|uidai|unique\s*identification|आधार/i.test(text)) score += 3;
+  if (/\bV[I1l]D\s*[:;.]?\s*\d{4}\s?\d{4}\s?\d{4}\s?\d{4}/i.test(text)) score += 2;
+  const nums = text.match(/(?<![\d/])[2-9]\d{3}\s\d{4}\s\d{4}(?![\s]?\d)/g) ?? [];
+  if (nums.length) score += 1;
+  if (nums.length >= 2) score += 1;
+  if (/gov\w{0,6}\s*of\s*ind/i.test(text)) score += 1;
+  if (/proof\s*of\s*identity|enrol+ment\s*no/i.test(text)) score += 1;
+  if (/D[O0Q][B8]|Date\s*of\s*Birth|Year\s*of\s*Birth|जन्म/i.test(text)) score += 1;
+  if (/\b(FE)?MALE\b|पुरुष|महिला/i.test(text)) score += 1;
+  if (/sgpa|cgpa|semester|marks?\s*(sheet|obtained)|grade\s*card|examination|seat\s*no/i.test(text)) score -= 3;
+  return score;
+}
+
 export function looksLikeAadhaar(text: string) {
-  if (/aadhaar|aadhar|uidai|unique\s+identification\s+authority|आधार|\bVID\s*:?\s*\d{4}\s?\d{4}\s?\d{4}\s?\d{4}/i.test(text)) return true;
-  // a 12-digit number printed in 4-4-4 groups next to a birth-date label
-  return /\b[2-9]\d{3}\s\d{4}\s\d{4}\b/.test(text) && /D[O0Q][B8]|Date\s*of\s*Birth|Year\s*of\s*Birth|जन्म/i.test(text) && /\b(FE)?MALE\b|पुरुष|महिला/i.test(text);
+  return aadhaarScore(text) >= 3;
 }

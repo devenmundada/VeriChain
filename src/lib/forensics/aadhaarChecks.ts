@@ -46,7 +46,8 @@ export interface QRInput {
 }
 
 const INDIC = /[\u0900-\u0DFF]/;
-const DOB_LABEL = /(?:D[O0Q][B8]|D\.O\.B\.?|Date\s*of\s*Birth|जन्म\s*(?:तिथि|तारीख))/i;
+// OCR of small text garbles the label ("Dane of BVDOS"); "…of B…" / "Birth" / "DOB" variants all count
+const DOB_LABEL = /(?:D\.?\s?[O0Q]\.?\s?[B8]|D\.O\.B\.?|Date\s*of\s*Birth|\bof\s*B[a-z]{0,4}|Birth|जन्म\s*(?:तिथि|तारीख))/i;
 const DATE = /(\d{2})\s*[/.-]\s*(\d{2})\s*[/.-]\s*(\d{4})/;
 const YOB_LABEL = /(?:Year\s*of\s*Birth|Y[O0]B|जन्म\s*वर्ष)/i;
 const GENDER = /\b(FEMALE|MALE|TRANSGENDER)\b|(महिला|पुरुष|स्त्री)/i;
@@ -112,7 +113,8 @@ export async function runAadhaarChecks(
   source: "pdf" | "ocr",
   pageW: number,
   pageH: number,
-  ocrWordConfidence?: (needle: string) => number
+  ocrWordConfidence?: (needle: string) => number,
+  opts: { smallText?: boolean } = {}
 ): Promise<{ evidence: Evidence[]; checks: CheckRun[]; report: AadhaarReport }> {
   const evidence: Evidence[] = [];
   const checks: CheckRun[] = [];
@@ -159,7 +161,7 @@ export async function runAadhaarChecks(
     const noVid = t
       .replace(/(?:V\s*[I1l|!]\s*[D0O]|\bID)\s*[:;.]?\s*[\d\s]{14,24}/gi, (x) => " ".repeat(x.length))
       .replace(/^\s*[:;]\s*\d{4}\s?\d{4}\s?\d{4}\s?\d{3,4}\b/, (x) => " ".repeat(x.length));
-    for (const m of noVid.matchAll(/(?<![\d/])([2-9]\d{3})[  ]?(\d{4})[  ]?(\d{4})(?![  ]?\d)/g)) {
+    for (const m of noVid.matchAll(/(?<!\d[ \u00a0]?)(?<!\/)([2-9]\d{3})[ \u00a0]?(\d{4})[ \u00a0]?(\d{4})(?![ \u00a0]?\d)/g)) {
       numbers.push({ line, li, start: m.index ?? 0, end: (m.index ?? 0) + m[0].length, num: m[1] + m[2] + m[3] });
     }
     if (!dob) {
@@ -189,6 +191,23 @@ export async function runAadhaarChecks(
       pincodes.push({ line, li, start: (m.index ?? 0) + m[0].length - 6, end: (m.index ?? 0) + m[0].length, pin: m[1] });
     }
   }
+  if (!dob && gender) {
+    const g = gender;
+    const cand = [g.line, ...neighbours(lines, g.line, "above", g.line.h * 1.6, pageW * 0.1).slice(0, 1)];
+    for (const l of cand) {
+      const dm = l.text.match(DATE);
+      const yr = dm ? Number(dm[3]) : 0;
+      if (dm && yr >= 1900 && yr <= new Date().getFullYear() && !/issue|download|details|as on|enrol/i.test(l.text)) {
+        const at = dm.index ?? 0;
+        dob = { line: l, li: lines.indexOf(l), start: at, end: at + dm[0].length, dob: `${dm[1]}-${dm[2]}-${dm[3]}`, yob: dm[3] };
+        break;
+      }
+    }
+  }
+  // a 12-digit piece of the 16-digit VID (when OCR lost the "VID" label on one copy) is not a number
+  // (16 digits in four groups on ONE printed line — never across lines or copies)
+  const vidDigits = lines.flatMap((l) => [...l.text.matchAll(/(?<!\d)\d{4}[ \u00a0]?\d{4}[ \u00a0]?\d{4}[ \u00a0]?\d{4}(?!\d)/g)].map((m) => m[0].replace(/\D/g, "")));
+  for (let k = numbers.length - 1; k >= 0; k--) if (vidDigits.some((v) => v.includes(numbers[k].num))) numbers.splice(k, 1);
   const maskedLast4 = findMaskedLast4(text);
   const distinctNumbers = [...new Set(numbers.map((n) => n.num))];
 
@@ -256,13 +275,15 @@ export async function runAadhaarChecks(
       if (res.valid || misread(n)) continue;
       allValid = false;
       const where = numbers.filter((x) => x.num === n);
-      const sure = conf(n) >= 90;
+      const sure = conf(n) >= 90 && !opts.smallText;
       ev({
         category: "aadhaar",
-        severity: sure ? "critical" : "warning",
+        severity: sure ? "critical" : opts.smallText ? "info" : "warning",
         title: "Aadhaar number is not valid",
         detail: sure
           ? `The printed number ${maskNumber(n)} ${res.reason}. Every real Aadhaar number passes this check, and changing even one digit breaks it.`
+          : opts.smallText
+          ? `The number read as ${maskNumber(n)} ${res.reason}, but the image is too small to read the digits reliably — check them by eye, or use the e-Aadhaar PDF.`
           : `The number read as ${maskNumber(n)} ${res.reason}. It may have been misread from the image — check the digits by eye. If they are right, the number was changed.`,
         regions: where.slice(0, 3).map((w) => reg(pad(spanOf(w.line, w.start, w.end)), "invalid number")),
         layerId: "aadhaar",
@@ -284,10 +305,10 @@ export async function runAadhaarChecks(
   // ── Copies that must agree (no QR needed) ──
   const validNumbers = validCopies;
   if (validNumbers.length >= 2) {
-    const sure = source === "pdf" || validNumbers.every((n) => conf(n) >= 85);
+    const sure = source === "pdf" || (validNumbers.every((n) => conf(n) >= 85) && !opts.smallText);
     ev({
       category: "aadhaar",
-      severity: sure ? "critical" : "warning",
+      severity: sure ? "critical" : opts.smallText ? "info" : "warning",
       title: "Different Aadhaar numbers on one card",
       detail: `The card prints its number several times, and the copies disagree: ${validNumbers.map(maskNumber).join(" vs ")}. One copy was changed.`,
       regions: numbers.filter((x) => validNumbers.includes(x.num)).slice(0, 4).map((w) => reg(pad(spanOf(w.line, w.start, w.end)), "number copy")),
@@ -299,7 +320,8 @@ export async function runAadhaarChecks(
   if (distinctVids.length >= 2) {
     ev({
       category: "aadhaar",
-      severity: source === "pdf" ? "critical" : "warning",
+      // from an image a VID copy is easily misread — and the VID isn't in the QR to settle it
+      severity: source === "pdf" ? "critical" : "info",
       title: "VID copies don't match",
       detail: `The Virtual ID is printed more than once and the copies differ (…${distinctVids.map((v) => v.slice(-4)).join(" vs …")}).`,
       regions: vids.slice(0, 4).map((w) => reg(pad(spanOf(w.line, w.start, w.end)), "VID copy")),
@@ -633,13 +655,24 @@ export async function runAadhaarChecks(
     const cardPresent = numbers.length >= 2 || !!cardName || (!!gender && distinctNumbers.length > 0);
     if (cardPresent && (!dob || !gender)) {
       const what = [!dob && "date of birth", !gender && "gender"].filter(Boolean).join(" and ");
-      const sure = readWellNoQr && !dob && !gender;
+      // DOB alone missing: still a hard finding when the name and gender lines were read clearly
+      // and nothing date-like is printed between them
+      const g = gender;
+      const noDateNearGender =
+        !!g && !neighbours(lines, g.line, "above", g.line.h * 3.5, pageW * 0.1).some((l) => /\d{2}\s*[/.-]\s*\d{2}|(19|20)\d{2}/.test(l.text));
+      const sure =
+        readWellNoQr &&
+        !opts.smallText &&
+        !dob &&
+        (!gender || (noDateNearGender && !!cardName && cardName.conf >= 85));
       ev({
         category: "aadhaar",
-        severity: sure || (readWellNoQr && source === "pdf") ? "critical" : "warning",
-        title: `${what[0].toUpperCase()}${what.slice(1)} missing from the card`,
+        severity: sure || (readWellNoQr && source === "pdf") ? "critical" : opts.smallText ? "info" : "warning",
+        title: opts.smallText ? `${what[0].toUpperCase()}${what.slice(1)} not readable` : `${what[0].toUpperCase()}${what.slice(1)} missing from the card`,
         detail: sure
           ? `Every Aadhaar card prints the holder's date of birth and gender under the name. This card's number and name were read clearly, but there is no ${what} — that part was removed or covered.`
+          : opts.smallText
+          ? `No ${what} could be read, but the image is too small to read the card's small text reliably. Check it by eye, or use the e-Aadhaar PDF.`
           : `Every Aadhaar card prints the date of birth and gender under the name, but no ${what} could be read here. Check the card by eye: if it's really missing, the card was edited.`,
         regions: expectedFieldsRegion(),
         layerId: "aadhaar",

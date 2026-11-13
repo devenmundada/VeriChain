@@ -20,7 +20,7 @@ import { readQRCodes, readQRCodesRobust, type QRHit } from "./forensics/qr";
 import { runAadhaarChecks, type AadhaarReport } from "./forensics/aadhaarChecks";
 import { checkGradeCard, checkMarksheet, looksLikeMarksheet, type GradeCardReport, type MarksheetReport } from "./forensics/marksheet";
 import { checkPrintedPhoto, decodeQrPhoto } from "./forensics/aadhaarPhoto";
-import { looksLikeAadhaar } from "./forensics/aadhaar";
+import { aadhaarNumberValid, looksLikeAadhaar } from "./forensics/aadhaar";
 import { analyzeGlyphs } from "./forensics/glyphForensics";
 import { fuse } from "./forensics/fusion";
 import { makeFingerprint, compareWithRegistry, spatialMerkleRoot, type Fingerprint, type RegistryMatch } from "./forensics/registry";
@@ -201,6 +201,7 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
   let pdfA: PdfAnalysis | null = null;
   let photoLike = false;
   let earlyQrs: QRHit[] | null = null;
+  let smallText = false;
   const meta: MetadataInfo = {
     hasExif: false,
     dimensions: { width: 0, height: 0 },
@@ -362,7 +363,16 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
       qrs.some((q) => b.x + b.w / 2 > q.box.x && b.x + b.w / 2 < q.box.x + q.box.w && b.y + b.h / 2 > q.box.y && b.y + b.h / 2 < q.box.y + q.box.h);
     let aBoxes = textSource === "ocr" ? textBoxes.filter((b) => !inQr(b)) : textBoxes;
     let aText = textSource === "ocr" ? aBoxes.map((b) => b.str).join(" ") : docText;
-    let a = await runAadhaarChecks(qrs, aBoxes, aText, textSource, render.width, render.height, confFor);
+    // How big is the card's text in this image? Forwarded photos of the whole e-Aadhaar letter are
+    // often ~550 px wide: the digits are 5–8 px tall and OCR can't read them reliably.
+    const numberLine = (t: string) => /(?<!\d\s?)(?<!\/)[2-9]\d{3}\s?\d{4}\s?\d{4}(?!\s?\d)/.test(t.replace(/V[I1l]D\s*[:;.]?[\d\s]+/i, ""));
+    const numHeights = buildLines(aBoxes).filter((l) => numberLine(l.text)).map((l) => l.h);
+    const wordHeights = ocrWords.filter((w) => w.confidence >= 70 && /[A-Za-z0-9]{3,}/.test(w.str)).map((w) => w.h).sort((p, q) => p - q);
+    // the smallest printed copy of the number decides (the letter also prints it large)
+    const textPx = numHeights.length ? Math.min(...numHeights) : wordHeights[wordHeights.length >> 1] ?? 0;
+    smallText = textSource === "ocr" && textPx > 0 && textPx < (numHeights.length ? 11 : 8);
+    const aOpts = { smallText };
+    let a = await runAadhaarChecks(qrs, aBoxes, aText, textSource, render.width, render.height, confFor, aOpts);
 
     // Images: the small identity block next to the photo (name, DOB, gender) is often misread by
     // the whole-page pass. Re-read the area above each printed number, enlarged, before deciding
@@ -396,12 +406,83 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
         aBoxes = [...kept, ...extra];
         ocrWords = [...ocrWords.filter((w) => !regions.some((r) => inside(w, r))), ...extra];
         aText = aBoxes.map((b) => b.str).join(" ");
-        a = await runAadhaarChecks(qrs, aBoxes, aText, textSource, render.width, render.height, confFor);
+        a = await runAadhaarChecks(qrs, aBoxes, aText, textSource, render.width, render.height, confFor, aOpts);
         textBoxes = aBoxes;
         // "missing" from an image is only a hard finding if the zoomed re-read itself was clear
         if (rereadConfident < 4)
           for (const e of a.evidence) if (e.severity === "critical" && /missing/i.test(e.title)) e.severity = "warning";
       }
+    }
+    // A printed number that fails the check digit in an image: read each copy again, enlarged and
+    // digits only, before calling it invalid (5↔6, 8↔3 misreads are common in small print).
+    if (textSource === "ocr" && a.report.numberValid === false) {
+      progress("Re-reading the Aadhaar number (zoomed)");
+      const lines = buildLines(aBoxes).filter((l) => numberLine(l.text)).slice(0, 4);
+      let fixed = false;
+      for (const l of lines) {
+        const r = { x: l.x - l.h, y: l.y - l.h * 0.5, w: l.w + l.h * 2, h: l.h * 2 };
+        try {
+          const ws = await ocrRegion(withoutQr(render.canvas, qrs), r, { psm: "7", digits: true, scale: Math.min(6, Math.max(3, 60 / Math.max(4, l.h))) });
+          const digits = ws.map((w) => w.str).join("").replace(/\D/g, "");
+          const m = digits.match(/[2-9]\d{11}/);
+          if (m && aadhaarNumberValid(m[0]).valid) {
+            const inLine = new Set(l.boxes);
+            const conf = Math.min(...ws.map((w) => w.confidence));
+            const grouped = `${m[0].slice(0, 4)} ${m[0].slice(4, 8)} ${m[0].slice(8)}`;
+            const box: OcrWord = { str: grouped, x: l.x, y: l.y, w: l.w, h: l.h, source: "ocr", confidence: conf };
+            aBoxes = [...aBoxes.filter((b) => !inLine.has(b)), box];
+            ocrWords = [...ocrWords.filter((w) => !inLine.has(w)), box];
+            fixed = true;
+          }
+        } catch {
+          /* keep the first reading */
+        }
+      }
+      if (fixed) {
+        aText = aBoxes.map((b) => b.str).join(" ");
+        a = await runAadhaarChecks(qrs, aBoxes, aText, textSource, render.width, render.height, confFor, aOpts);
+        textBoxes = aBoxes;
+      }
+    }
+    // A printed date of birth that disagrees with the signed QR in an image: read it again, enlarged,
+    // before deciding. Same date again → confirmed edit; the QR's date → it was a misread.
+    const dobEv = a.evidence.find((e) => e.title === "Date of birth doesn't match the QR" && e.severity === "warning");
+    const qrDob = a.report.qr?.dob;
+    const dobRegion = dobEv?.regions?.find((g) => g.label === "DOB ≠ QR");
+    if (textSource === "ocr" && dobEv && qrDob && dobRegion) {
+      progress("Re-reading the date of birth (zoomed)");
+      const W = render.width, H = render.height, lh = dobRegion.h * H;
+      const r = { x: dobRegion.x * W - lh, y: dobRegion.y * H - lh * 0.3, w: dobRegion.w * W + lh * 2, h: lh * 1.6 };
+      try {
+        const ws = await ocrRegion(withoutQr(render.canvas, qrs), r, { psm: "7", whitelist: "0123456789/-. ", scale: Math.min(6, Math.max(3, 60 / Math.max(4, lh))) });
+        const m = ws.map((w) => w.str).join(" ").match(/(\d{2})\s*[/.-]\s*(\d{2})\s*[/.-]\s*(\d{4})/);
+        const again = m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+        if (again && again === qrDob.replace(/\//g, "-")) {
+          dobEv.severity = "info";
+          dobEv.title = "Date of birth re-read — matches the QR";
+          dobEv.detail = `The first reading (${a.report.printedDob}) was a misread: read again enlarged, the printed date is ${again}, the same as the signed QR.`;
+          delete dobEv.change;
+          a.report.printedDob = again;
+          const stillOff = a.evidence.some((e) => e.category === "aadhaar" && (e.severity === "critical" || e.severity === "warning"));
+          const qc = a.checks.find((c) => c.id === "aad-qr");
+          if (qc && !stillOff) qc.status = "pass";
+        } else if (again && again === a.report.printedDob) {
+          dobEv.severity = "critical";
+          dobEv.detail = `The UIDAI-signed QR says ${qrDob}, but the card shows ${again} (confirmed by a second, enlarged reading).`;
+        }
+      } catch {
+        /* keep the first reading */
+      }
+    }
+    if (textSource === "ocr") checks.push({ id: "aad-textpx", label: "Card text size", status: smallText ? "skip" : "pass", note: `${Math.round(textPx)} px${smallText ? " — too small to verify" : ""}` });
+    if (smallText) {
+      a.evidence.push({
+        id: "aad-small",
+        category: "aadhaar",
+        severity: "info",
+        title: "Image too small to read the card reliably",
+        detail: `The card's text is only about ${Math.round(textPx)} px tall in this image (forwarded or downsized). Digits and the QR can't be read reliably at this size, so missing or invalid values are not treated as proof. Upload the e-Aadhaar PDF or a sharper photo for a full check.`,
+      });
     }
     evidence.push(...a.evidence);
     checks.push(...a.checks);
@@ -462,11 +543,11 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
     if (aadhaar.qrMatches && aadhaar.photo?.verdict === "match" && !a.evidence.some((e) => e.severity === "critical")) {
       for (let k = 0; k < evidence.length; k++) {
         const e = evidence[k];
-        if (e.category === "metadata" && e.severity === "warning" && /editing tool|issuer's original/i.test(e.title)) {
+        if ((e.category === "metadata" || e.category === "pdf-structure") && e.severity === "warning" && /editing tool|issuer's original|re-saved after signing|added after signing/i.test(e.title)) {
           evidence[k] = {
             ...e,
             severity: "info",
-            title: "Re-saved by another program",
+            title: /signing/i.test(e.title) ? "Re-saved after signing (details still match the QR)" : "Re-saved by another program",
             detail: `${e.detail} Here the printed name, date of birth, gender, number and photo all match the UIDAI-signed QR, so the re-save (often done to remove the password) is not by itself a sign of editing. UIDAI's digital signature is no longer on this copy.`,
           };
         }
@@ -550,7 +631,9 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
   const idCard = docType === "aadhaar";
   const qrCompared = checks.some((c) => c.id === "aad-qr" && c.status !== "skip");
   const digitChecked = checks.some((c) => c.id === "aad-verhoeff" && c.status !== "skip");
-  const idVerifiable = (docKind === "pdf" && !pdfA?.isScanned) || qrCompared || digitChecked;
+  // From a tiny image the check digit alone isn't enough: the DOB and gender must have been read too.
+  const smallOk = !smallText || (!!aadhaar?.numberValid && !!(aadhaar.printedDob || aadhaar.printedYob) && !!aadhaar.printedGender);
+  const idVerifiable = (docKind === "pdf" && !pdfA?.isScanned) || qrCompared || (digitChecked && smallOk);
   // Identity-field mask: cells around the name, DOB, gender and number (and where a missing
   // field should be). Pixel evidence there counts even on an ID card.
   let idMask: Uint8Array | undefined;
@@ -567,7 +650,7 @@ export async function analyzeDocument(file: File, opts: AnalyzeOptions = {}): Pr
         for (const r of e.regions ?? []) if (r.label !== "signed QR") m.markRect(r.x * render.width, r.y * render.height, r.w * render.width, r.h * render.height, 1);
     for (let k = 0; k < m.data.length; k++) idMask[k] = m.data[k] > 0 ? 1 : 0;
   }
-  const f = fuse(grid, layers, evidence, checks, { lowContent, idCard, idVerifiable, idMask });
+  const f = fuse(grid, layers, evidence, checks, { lowContent, idCard, idVerifiable, idMask, smallImage: smallText && !qrCompared });
   meta.inconsistencies = f.evidence.filter((e) => e.category === "metadata" && e.severity !== "pass" && e.severity !== "info").map((e) => e.title);
 
   const pageImageUrl = render.canvas.toDataURL("image/jpeg", 0.9);

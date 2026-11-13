@@ -38,16 +38,21 @@ export interface OcrResult {
 }
 
 export async function runOcr(canvas: HTMLCanvasElement): Promise<OcrResult> {
-  // Tesseract is fastest around 1600–2200 px wide.
+  // Tesseract is fastest around 1600–2200 px wide and needs text ~20 px tall: shrink big images,
+  // enlarge small ones (forwarded photos are often ~500–900 px wide, with 5–8 px text).
   const maxW = 2200;
   let src = canvas;
   let scale = 1;
-  if (canvas.width > maxW) {
-    scale = maxW / canvas.width;
+  if (canvas.width > maxW) scale = maxW / canvas.width;
+  else if (canvas.width < 800) scale = Math.min(3, 1600 / canvas.width); // only tiny images: enlarging mid-size ones changes nothing useful
+  if (scale !== 1) {
     src = document.createElement("canvas");
     src.width = Math.round(canvas.width * scale);
     src.height = Math.round(canvas.height * scale);
-    src.getContext("2d")!.drawImage(canvas, 0, 0, src.width, src.height);
+    const ctx = src.getContext("2d")!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(canvas, 0, 0, src.width, src.height);
   }
   const worker = await getWorker();
   const { data } = await worker.recognize(src, {}, { text: true, blocks: true });
@@ -82,7 +87,7 @@ export async function runOcr(canvas: HTMLCanvasElement): Promise<OcrResult> {
 export async function ocrRegion(
   canvas: HTMLCanvasElement,
   rect: { x: number; y: number; w: number; h: number },
-  opts: { scale?: number; psm?: "6" | "11" | "4" } = {}
+  opts: { scale?: number; psm?: "6" | "7" | "11" | "4"; digits?: boolean; whitelist?: string } = {}
 ): Promise<OcrWord[]> {
   const x = Math.max(0, Math.floor(rect.x)), y = Math.max(0, Math.floor(rect.y));
   const w = Math.min(canvas.width - x, Math.ceil(rect.w)), h = Math.min(canvas.height - y, Math.ceil(rect.h));
@@ -114,7 +119,7 @@ export async function ocrRegion(
   }
   ctx.putImageData(img, 0, 0);
   const worker = await getWorker();
-  await worker.setParameters({ tessedit_pageseg_mode: opts.psm ?? "6" });
+  await worker.setParameters({ tessedit_pageseg_mode: opts.psm ?? "6", tessedit_char_whitelist: opts.whitelist ?? (opts.digits ? "0123456789 " : "") });
   try {
     const { data } = await worker.recognize(c, {}, { blocks: true });
     const words: OcrWord[] = [];
@@ -136,6 +141,6 @@ export async function ocrRegion(
           }
     return words;
   } finally {
-    await worker.setParameters({ tessedit_pageseg_mode: "3" });
+    await worker.setParameters({ tessedit_pageseg_mode: "3", tessedit_char_whitelist: "" });
   }
 }
