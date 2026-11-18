@@ -1,486 +1,365 @@
-# VeriChain — On-Device AI Document Authenticity Platform
+<div align="center">
 
-![Next.js](https://img.shields.io/badge/Next.js-16.1.6-black?logo=next.js)
-![RunAnywhere](https://img.shields.io/badge/RunAnywhere_SDK-0.1.0--beta.10-blue)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?logo=typescript&logoColor=white)
-![PWA](https://img.shields.io/badge/PWA-Offline_Ready-5a0fc8)
+# VeriChain
+
+### Catch edited Aadhaar cards and marksheets — without the original, and without uploading them anywhere.
+
+VeriChain finds hidden earlier versions, covered text, swapped photos, QR mismatches and numbers that don't add up —
+then shows **what** was changed and **where** on the page. Every check runs **inside your browser**.
+
+<br/>
+
+[![Live demo](https://img.shields.io/badge/Live_demo-veri--chain--orcin.vercel.app-39FF14?style=for-the-badge&logo=vercel&logoColor=black)](https://veri-chain-orcin.vercel.app)
+
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss&logoColor=white)
+![WebAssembly](https://img.shields.io/badge/WebAssembly-on--device-654FF0?logo=webassembly&logoColor=white)
+![Privacy](https://img.shields.io/badge/Uploads-zero-39FF14)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-**100% Private. Zero Cloud. Instant Verification.**
+[What it catches](#what-it-catches) · [How it works](#how-it-works) · [Results](#tested-on) · [Run it locally](#run-it-locally) · [Demo script](docs/DEMO.md) · [2-page overview (PDF)](docs/VeriChain-Solution-Overview.pdf)
 
-> **RunAnywhere Vibe Coding Challenge** — Demonstrating the full breadth of on-device AI for document verification: LLM, STT, TTS, VAD, Voice Pipeline, Tool Calling, Structured Output, and PWA offline support.
+<br/>
 
-VeriChain is a digital document authenticity verification platform that runs entirely in your browser using **on-device AI** powered by [RunAnywhere SDK](https://docs.runanywhere.ai/). No data ever leaves your device — forensic analysis, AI reasoning, cryptographic fingerprinting, and blockchain proof all happen locally.
+<img src="docs/screenshots/home.jpg" alt="VeriChain home: upload a document or try a fictional sample" width="900"/>
 
-## The Problem
-
-Document fraud costs billions annually. Current verification tools either:
-- **Send your sensitive documents to cloud servers** — privacy nightmare
-- **Require internet** — useless offline
-- **Are slow** — network roundtrips add lag
-- **Cost money per API call** — expensive at scale
-
-## The Solution: On-Device AI Verification
-
-VeriChain solves all of these by running AI **directly in the browser** via WebAssembly:
-
-| Feature | How It Works |
-|---------|-------------|
-| **Privacy** | Documents never leave your device — all AI inference runs in WASM |
-| **Zero Cost** | No cloud API fees — the on-device LLM runs for free after download |
-| **Low Latency** | No network roundtrips — analysis is instant |
-| **Works Offline** | PWA with service worker — works without internet after model download |
-| **Blockchain Proof** | Cryptographic hash anchored on Polygon for tamper-proof verification |
-
-## Tamper Map — Find Edits Without the Original
-
-Most verifiers never have the original document. VeriChain compares the upload with **four other references**, all on-device:
-
-| Reference | Checks | Example catch |
-|---|---|---|
-| **The document vs itself** | Grain/noise map, background micro-steps, edge-normalised ELA (JPEG), every number vs its own row (ink, sharpness, size, baseline) | Whited-out mark with pasted digits in a photo |
-| **Older versions hidden in the file** | PDF incremental saves recovered and diffed, text hidden under white boxes, text drawn over text, editor annotations, duplicate font subsets, EXIF preview vs image | "88 → 98, 436 → 446" recovered from inside an edited PDF |
-| **Signed data printed on it** | Aadhaar Secure QR (UIDAI-signed name, DOB, gender, last 4 digits) vs printed text; PDF signature changed after signing | Edited date of birth on an Aadhaar card |
-| **The document's own rules** | Aadhaar Verhoeff check digit; marksheet column sums vs Total, obtained ≤ max, percentage | Changed mark when the total wasn't updated |
-
-Also on-device: the **photo UIDAI signs inside the Aadhaar Secure QR** (JPEG 2000) is decoded and compared with the
-printed photo (swapped photo → edited); fields are read **as they look on the page** (annotations, white boxes and text
-typed over text replace what they cover), so edits made in **Canva** or **iLovePDF** are caught by the QR mismatch; and
-**grade cards** are checked with their own arithmetic (SGPA = credit points ÷ credits, CGPA = cumulative points ÷
-cumulative credits, credits × grade points = credit points).
-
-Every detector writes onto one shared grid (the spatial hash map). A region turns red only when a deterministic check fires or **two independent checks agree**, which keeps false alarms down. The verdict is **Edited / Suspicious / No signs of editing / Matches registered original**, with a "what was changed" list (for example `45 → 85`) and a layered heatmap.
-
-**With the original:** an issuer registers a genuine file on-device; any later copy is compared cell by cell, and a **spatial Merkle root** (one leaf per grid row) is what gets anchored on Polygon.
-
-Try it: the home page has nine fictional sample files (genuine and edited marksheets as PDF/JPG/PNG). See [docs/DEMO.md](docs/DEMO.md).
-
-## RunAnywhere SDK Integration — Complete Feature Coverage
-
-VeriChain uses **every major feature** of the RunAnywhere Web SDK:
-
-### Core AI Capabilities
-
-| SDK Feature | Integration | Details |
-|-------------|-------------|---------|
-| **LLM (TextGeneration)** | Forensic reasoning + AI chat | LFM2-350M via llama.cpp WASM, streaming token generation with tok/s metrics |
-| **STT (Speech-to-Text)** | Voice input in AI Assistant | Whisper Tiny EN via sherpa-onnx WASM, 16kHz AudioCapture |
-| **TTS (Text-to-Speech)** | Verdict readout + chat auto-speak | Piper Lessac via sherpa-onnx WASM with AudioPlayback, Web Speech fallback |
-| **VAD (Voice Activity Detection)** | Smart microphone | Silero VAD v5 detects speech start/end, auto-transcribes on speech end |
-| **Voice Pipeline** | Full voice assistant | VoicePipeline class: VAD → STT → LLM → TTS in single orchestrated flow |
-| **Tool Calling** | Forensic data tools | 3 registered tools (get_forensic_report, get_hash_fingerprint, get_blockchain_status) with auto-execution |
-| **Structured Output** | JSON schema validation | StructuredOutput.getSystemPrompt() + validate() for type-safe LLM responses |
-
-### Infrastructure
-
-| SDK Feature | Integration | Details |
-|-------------|-------------|---------|
-| **ModelManager** | Model lifecycle | Download, load, coexist mode for running 4 models simultaneously |
-| **EventBus** | Progress tracking | Real-time download progress for all models via event subscription |
-| **AudioCapture** | Microphone input | 16kHz capture with level monitoring for voice features |
-| **AudioPlayback** | Speech output | Plays TTS-synthesized audio directly in browser |
-| **OPFS Storage** | Persistent models | One-time download, models persist across sessions in Origin Private File System |
-| **COOP/COEP Headers** | Multi-threaded WASM | SharedArrayBuffer enabled for parallel inference |
-
-### Models (4 on-device, ~425MB total)
-
-| Model | Size | Purpose |
-|-------|------|---------|
-| LFM2-350M-Q4_K_M | ~250MB | Forensic reasoning + chat + tool calling |
-| Whisper Tiny EN | ~105MB | Speech-to-text transcription |
-| Piper Lessac Medium | ~65MB | Text-to-speech synthesis |
-| Silero VAD v5 | ~5MB | Voice activity detection |
-
-## Unique Features & Innovation
-
-1. **Voice Pipeline Forensics** — Speak a question → VAD detects speech → STT transcribes → LLM reasons about forensic data → TTS reads the answer. Complete hands-free document analysis.
-2. **Tool-Augmented AI Chat** — LLM uses registered forensic tools (Tool Calling) to access real-time analysis data instead of relying only on prompt context.
-3. **Structured Forensic Reports** — LLM generates JSON-schema-validated structured output for machine-readable forensic reports.
-4. **VAD-Powered Smart Mic** — Microphone auto-detects when you start/stop speaking, eliminating manual record buttons.
-5. **PWA + Offline Mode** — Full progressive web app with service worker caching. Works completely offline after initial model download.
-6. **Multi-Model Coexistence** — All 4 AI models (LLM, STT, TTS, VAD) loaded simultaneously in WASM memory using `coexist: true`.
-7. **Blockchain-Anchored Proof** — SHA-256 + pHash fingerprints minted to Polygon with QR verification seals.
-8. **Real-Time Performance Dashboard** — Live tok/s, latency, privacy score, acceleration mode metrics.
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                      Browser (Client)                        │
-│                                                              │
-│  ┌──────────────┐  ┌──────────────────┐  ┌──────────────┐   │
-│  │ Forensic     │  │ RunAnywhere SDK  │  │ Blockchain    │   │
-│  │ Engine       │  │ ┌──────────────┐ │  │ (Polygon)     │   │
-│  │ • ELA        │  │ │ LLM (WASM)   │ │  │ • Hash Mint   │   │
-│  │ • Pixel Stats│  │ │ • TextGen    │ │  │ • Seal QR     │   │
-│  │ • Metadata   │  │ │ • ToolCall   │ │  │ • Verify      │   │
-│  └──────────────┘  │ │ • Structured │ │  └──────────────┘   │
-│                    │ └──────────────┘ │                      │
-│  ┌──────────────┐  │ ┌──────────────┐ │  ┌──────────────┐   │
-│  │ SHA-256 Hash │  │ │ STT (WASM)   │ │  │ Performance   │   │
-│  │ (Web Crypto) │  │ │ • Whisper    │ │  │ Dashboard     │   │
-│  └──────────────┘  │ └──────────────┘ │  │ • tok/s       │   │
-│                    │ ┌──────────────┐ │  │ • Latency     │   │
-│  ┌──────────────┐  │ │ TTS (WASM)   │ │  └──────────────┘   │
-│  │ Perceptual   │  │ │ • Piper      │ │                      │
-│  │ Hash (pHash) │  │ └──────────────┘ │  ┌──────────────┐   │
-│  └──────────────┘  │ ┌──────────────┐ │  │ PWA + SW      │   │
-│                    │ │ VAD (WASM)   │ │  │ • Offline     │   │
-│                    │ │ • Silero     │ │  │ • Install     │   │
-│                    │ └──────────────┘ │  └──────────────┘   │
-│                    └──────────────────┘                      │
-│                                                              │
-│  ┌──────────────────────────────────────────────────────────┐│
-│  │ Voice Pipeline: MIC → VAD → STT → LLM → TTS → SPEAKER  ││
-│  │ Tool Calling: LLM ↔ get_forensic_report, get_hash, ...  ││
-│  │ AI Chat: Text/Voice → Streaming LLM → Auto-Speak        ││
-│  └──────────────────────────────────────────────────────────┘│
-│                                                              │
-│              Zero Cloud — Zero Data Leakage — Zero Cost      │
-└──────────────────────────────────────────────────────────────┘
-```
-
-## Tech Stack
-
-- **Framework**: Next.js 16 + React 19 + TypeScript
-- **On-Device AI**: RunAnywhere Web SDK (`@runanywhere/web`, `@runanywhere/web-llamacpp`, `@runanywhere/web-onnx`)
-  - LLM: TextGeneration, ToolCalling, StructuredOutput
-  - Audio: STT, TTS, VAD, VoicePipeline, AudioCapture, AudioPlayback
-  - Infra: ModelManager, EventBus, OPFS, COOP/COEP headers
-- **Styling**: Tailwind CSS 4 + Framer Motion
-- **Blockchain**: Ethers.js v6 + Polygon Amoy Testnet
-- **Crypto**: Web Crypto API (SHA-256) + Custom pHash
-- **PWA**: Service Worker + Web App Manifest for offline support
-- **QR Codes**: qrcode.react for verification seals
-
-## Screenshots
-
-### Hero Upload
-Drag & drop image upload with animated gradient background. Supports PNG, JPG, PDF, DOCX up to 50MB. Powered 100% on-device — files never leave your browser.
-
-![Hero Upload](docs/screenshots/01-hero-upload.png)
-
-### Pipeline & Verdict
-5-stage verification pipeline (Upload → AI Analysis → Fingerprint → Blockchain → Certified) with authenticity verdict, confidence score, and risk assessment.
-
-![Pipeline & Verdict](docs/screenshots/02-pipeline-verdict.png)
-
-### Tampering Evidence — Heatmap View
-Error Level Analysis (ELA) heatmap highlights areas where image compression levels differ — bright colored areas indicate regions that may have been modified.
-
-![Heatmap Tampering Evidence](docs/screenshots/03-heatmap-tampering.png)
-
-### Fingerprint & Blockchain Proof
-Digital fingerprinting (SHA-256 + pHash), live blockchain minting activity on Polygon Amoy, and QR-coded verification seal with permanent proof certificate.
-
-![Fingerprint & Blockchain](docs/screenshots/04-fingerprint-blockchain.png)
-
-### AI Assistant & Voice Pipeline
-On-device AI chat with tool calling, VAD-powered voice input, and full Voice Pipeline (VAD → STT → LLM → TTS). All 4 AI models running simultaneously in-browser.
-
-![AI Assistant & Voice Pipeline](docs/screenshots/05-ai-assistant-voice.png)
-
-### Performance & Network Diagnostics
-Live on-device metrics: LLM inference speed (tok/s), AI latency, privacy score (100% — zero cloud calls), GPU/WASM acceleration, and blockchain network health.
-
-![Performance & Network](docs/screenshots/06-performance-network.png)
-
-## Getting Started
-
-### Prerequisites
-- Node.js 18+
-- Chrome 96+ or Edge 96+ (for WebAssembly support)
-
-### Installation
-
-```bash
-git clone <repo-url>
-cd authenticity-platform
-npm install
-```
-
-### Run Development Server
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) in Chrome/Edge.
-
-### Build for Production
-
-```bash
-npm run build
-npm start
-```
-
-## How It Works
-
-1. **Upload** — Drag & drop an image or document
-2. **AI Analysis** — On-device forensic engine runs ELA, pixel analysis, and metadata extraction
-3. **LLM Reasoning** — RunAnywhere LLM (LFM2-350M) analyzes forensic data and provides expert assessment
-4. **Ask Questions** — Use the AI Assistant (text or voice with VAD) to ask about findings — all responses generated on-device
-5. **Voice Pipeline** — Tap the Voice Pipeline orb: speak → VAD detects → STT transcribes → LLM reasons → TTS speaks the answer
-6. **Tool Calling** — Toggle tool mode so the LLM can query forensic data, hash fingerprints, and blockchain status via registered tools
-7. **Fingerprint** — SHA-256 + perceptual hash generated client-side
-8. **Blockchain** — Proof anchored on Polygon Amoy testnet
-9. **Seal** — QR-coded verification seal with permanent link
-10. **Listen** — TTS reads the verdict aloud using on-device Piper voice synthesis
-
-## On-Device AI Use Case: Why This Matters
-
-Document verification is the **perfect use case** for on-device AI because:
-
-1. **Privacy is critical** — People upload passports, certificates, contracts. Sending these to cloud APIs is a massive privacy risk.
-2. **Offline capability** — Lawyers, notaries, and investigators need verification in courtrooms, remote locations, or air-gapped environments.
-3. **Zero cost at scale** — Organizations verify thousands of documents. Cloud AI costs add up. On-device is free after initial download.
-4. **Low latency** — Real-time analysis during document review, not waiting for server responses.
-5. **Trust** — Users can verify the AI never exfiltrates data because all processing is visible in the browser.
-6. **Multi-modal interaction** — Voice Pipeline enables hands-free operation for accessibility and field use.
-
-## Judging Criteria Alignment
-
-| Criteria | Weight | How VeriChain Excels |
-|----------|--------|---------------------|
-| **Innovation** | 25% | Unique voice-first forensic analysis pipeline; tool-calling AI for real-time data access; blockchain-anchored proofs |
-| **On-Device AI Integration** | 30% | Uses 7/7 SDK features: LLM, STT, TTS, VAD, Voice Pipeline, Tool Calling, Structured Output. 4 models loaded simultaneously. |
-| **UX** | 20% | Beautiful dark UI, animated transitions, one-click model download, VAD smart mic, performance dashboard |
-| **Technical Implementation** | 15% | WASM multi-threading (COOP/COEP), OPFS persistence, PWA offline, streaming tokens, coexist model loading |
-| **Impact** | 10% | Solves billion-dollar document fraud problem with zero-cost, private, offline-capable solution |
-
-## Project Structure
-
-```
-authenticity-platform/
-├── public/
-│   ├── manifest.json          # PWA manifest (name, icons, theme)
-│   ├── sw.js                  # Service worker (offline caching)
-│   ├── icon.svg / icon-192.png / icon-512.png  # App icons
-│   └── ...
-├── src/
-│   ├── app/
-│   │   ├── layout.tsx         # Root layout, PWA meta, SW registration
-│   │   ├── page.tsx           # Main page — orchestrates all 16 components
-│   │   ├── globals.css        # Tailwind + custom styles
-│   │   ├── api/verify/[id]/route.ts   # Verification API endpoint
-│   │   └── verify/[id]/page.tsx       # Public verification page
-│   ├── components/
-│   │   ├── HeroUpload.tsx         # Drag-and-drop image upload with preview
-│   │   ├── PipelineStepper.tsx    # 5-step analysis pipeline progress tracker
-│   │   ├── VerdictCard.tsx        # Verdict display with TTS readout
-│   │   ├── AIForensicPanel.tsx    # AI forensic analysis results panel
-│   │   ├── HeatmapViewer.tsx      # ELA heatmap visualization
-│   │   ├── HashTerminal.tsx       # SHA-256 & pHash fingerprint terminal
-│   │   ├── BlockchainFeed.tsx     # Blockchain minting progress feed
-│   │   ├── VerificationSeal.tsx   # QR verification seal generator
-│   │   ├── AIAssistantPanel.tsx   # AI chat with VAD mic + tool calling
-│   │   ├── VoicePipelinePanel.tsx # Voice orb: VAD → STT → LLM → TTS
-│   │   ├── OnDeviceAIPanel.tsx    # Model download manager (4 models)
-│   │   ├── PerformanceMetrics.tsx # Live AI performance dashboard
-│   │   ├── IssuerIdentity.tsx     # Issuer identity & provenance info
-│   │   ├── TimelinePanel.tsx      # Document event timeline
-│   │   ├── NetworkDiagnostics.tsx # Network & connectivity diagnostics
-│   │   └── ToastProvider.tsx      # Toast notification system
-│   ├── lib/
-│   │   ├── runanywhere.ts     # RunAnywhere SDK wrapper (all 7 features)
-│   │   ├── forensicEngine.ts  # Image forensic analysis (ELA, stats, metadata)
-│   │   ├── hashEngine.ts      # SHA-256 + perceptual hash generation
-│   │   ├── blockchain.ts      # Polygon Amoy blockchain integration
-│   │   ├── AppContext.tsx      # React context (app state + SDK init)
-│   │   └── useOnlineStatus.ts # Online/offline detection hook
-│   └── fonts/                 # Custom fonts
-├── next.config.ts             # WASM rules, COOP/COEP headers, Turbopack
-├── package.json
-├── tsconfig.json
-└── README.md
-```
-
-## Component Breakdown
-
-| Component | Purpose | SDK Features Used |
-|-----------|---------|-------------------|
-| **HeroUpload** | Image upload with drag-and-drop, preview, and pipeline trigger | — |
-| **PipelineStepper** | Animated 5-stage progress tracker (Upload → Forensics → Hash → Blockchain → Verdict) | — |
-| **VerdictCard** | Final verdict display with confidence score and TTS readout button | TTS, AudioPlayback |
-| **AIForensicPanel** | AI-generated forensic analysis with streaming token display | LLM (TextGeneration) |
-| **HeatmapViewer** | Error Level Analysis (ELA) heatmap of uploaded image | — |
-| **HashTerminal** | Real-time SHA-256 and pHash computation with animated terminal UI | — |
-| **BlockchainFeed** | Live blockchain minting activity feed with transaction links | — |
-| **VerificationSeal** | QR code seal linking to permanent verification page | — |
-| **AIAssistantPanel** | Multi-turn AI chat with VAD-powered voice input and tool calling | LLM, STT, VAD, Tool Calling |
-| **VoicePipelinePanel** | Animated voice orb — full pipeline: speak → detect → transcribe → reason → respond | Voice Pipeline, VAD, STT, LLM, TTS |
-| **OnDeviceAIPanel** | Download and manage all 4 AI models with progress tracking | ModelManager, EventBus |
-| **PerformanceMetrics** | Real-time dashboard: tok/s, latency, privacy score, active models | — |
-| **IssuerIdentity** | Document issuer provenance and identity information | — |
-| **TimelinePanel** | Chronological event log of the verification process | — |
-| **NetworkDiagnostics** | Network status, connectivity checks, and offline detection | — |
-| **ToastProvider** | Application-wide toast notification system | — |
-
-## API Routes
-
-### `GET /api/verify/[id]`
-
-Returns the verification result for a given document ID (used by QR seal links).
-
-**Response:**
-```json
-{
-  "id": "uuid",
-  "verdict": "authentic" | "suspicious" | "forged",
-  "confidence": 0.95,
-  "sha256": "abc123...",
-  "pHash": "1010101...",
-  "blockchain": {
-    "txHash": "0x...",
-    "network": "polygon-amoy"
-  },
-  "timestamp": "2026-03-10T..."
-}
-```
-
-### `GET /verify/[id]`
-
-Public verification page — anyone with a QR seal can verify a document's authenticity.
-
-## Environment Variables
-
-No environment variables are required for basic operation. All AI inference runs on-device.
-
-For blockchain features (optional):
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `NEXT_PUBLIC_POLYGON_RPC` | Polygon Amoy RPC endpoint | Public Polygon Amoy RPC |
-| `NEXT_PUBLIC_WALLET_KEY` | Wallet private key for minting proofs | Auto-generated ephemeral wallet |
-
-> **Note:** For the hackathon demo, blockchain uses a bundled ephemeral wallet on Polygon Amoy testnet. No environment configuration is needed.
-
-## Browser Compatibility
-
-VeriChain requires modern browser features for on-device AI:
-
-| Feature | Minimum Version | Required For |
-|---------|----------------|--------------|
-| **WebAssembly** | Chrome 57+ / Edge 16+ | All AI inference (LLM, STT, TTS, VAD) |
-| **SharedArrayBuffer** | Chrome 92+ / Edge 92+ | Multi-threaded WASM (requires COOP/COEP headers) |
-| **Origin Private File System** | Chrome 86+ / Edge 86+ | Persistent model storage across sessions |
-| **Web Crypto API** | Chrome 37+ / Edge 12+ | SHA-256 hash generation |
-| **MediaDevices (getUserMedia)** | Chrome 53+ / Edge 12+ | Microphone access for STT/VAD |
-| **Service Worker** | Chrome 40+ / Edge 17+ | PWA offline support |
-
-**Recommended:** Chrome 96+ or Edge 96+ for the best experience.
-
-> **Firefox/Safari:** Partial support. SharedArrayBuffer may not be available without COOP/COEP, which can cause multi-threaded WASM to fall back to single-threaded mode (slower but functional).
-
-## Deployment
-
-### Vercel (Recommended)
-
-```bash
-npm i -g vercel
-vercel
-```
-
-Next.js deploys seamlessly to Vercel. The COOP/COEP headers are configured in [next.config.ts](next.config.ts) and will be served automatically.
-
-### Docker
-
-```dockerfile
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-
-FROM node:20-alpine AS runner
-WORKDIR /app
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/package*.json ./
-RUN npm ci --omit=dev
-EXPOSE 3000
-CMD ["npm", "start"]
-```
-
-### Static Export
-
-```bash
-# Add to next.config.ts: output: 'export'
-npm run build
-# Serve the 'out' directory with any static file server
-```
-
-> **Important:** Whichever hosting you use, ensure the server sends the required headers:
-> ```
-> Cross-Origin-Opener-Policy: same-origin
-> Cross-Origin-Embedder-Policy: require-corp
-> ```
-> These are required for SharedArrayBuffer, which enables multi-threaded WASM inference.
-
-## Performance
-
-Approximate benchmarks on consumer hardware (M1 MacBook Air / Intel i7-12th Gen):
-
-| Metric | Value |
-|--------|-------|
-| **Model Download** | ~425MB total (one-time, cached in OPFS) |
-| **LLM Inference** | 8–15 tok/s (LFM2-350M-Q4) |
-| **STT Transcription** | <2s for 5s audio clip |
-| **TTS Synthesis** | <1s for short sentences |
-| **VAD Detection** | <50ms latency |
-| **Forensic Analysis** | <3s full pipeline |
-| **Cold Start (no cache)** | ~30s (model loading from OPFS) |
-| **Warm Start (cached)** | ~5s (models already in memory) |
-
-## Offline Mode
-
-VeriChain works fully offline after initial setup:
-
-1. **First visit:** Download all 4 AI models (~425MB) — stored persistently in OPFS
-2. **Service worker:** Caches app shell, pages, and static assets
-3. **Subsequent visits:** Everything runs from cache — no internet required
-4. **Blockchain:** When offline, generates a local cryptographic proof that can be submitted to the blockchain when connectivity returns
-
-The offline banner in the UI indicates connectivity status, and the app gracefully degrades non-critical features.
-
-## Security & Privacy
-
-- **Zero data exfiltration** — All AI inference runs in browser WASM sandboxes
-- **No telemetry** — No analytics, tracking, or external requests (except optional blockchain)
-- **Client-side crypto** — SHA-256 via Web Crypto API, never transmitted
-- **Ephemeral wallet** — Blockchain wallet generated in-browser, never stored on servers
-- **COOP/COEP isolation** — Cross-origin isolation prevents data leakage between origins
-- **Service worker scope** — SW explicitly skips caching external domains (HuggingFace model CDN, Polygon RPC)
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Acknowledgments
-
-- [RunAnywhere SDK](https://docs.runanywhere.ai/) — On-device AI inference engine
-- [LFM2-350M](https://huggingface.co/lamini) — Compact language model for edge deployment
-- [Whisper Tiny](https://github.com/openai/whisper) — Speech recognition model
-- [Piper TTS](https://github.com/rhasspy/piper) — Fast neural text-to-speech
-- [Silero VAD](https://github.com/snakers4/silero-vad) — Voice activity detection
-- [Polygon](https://polygon.technology/) — Layer 2 blockchain for proof anchoring
-- [Next.js](https://nextjs.org/) — React framework
-- [Tailwind CSS](https://tailwindcss.com/) — Utility-first CSS
-- [Framer Motion](https://www.framer.com/motion/) — Animation library
-- [ethers.js](https://docs.ethers.org/) — Ethereum library
-
-## License
-
-MIT
+</div>
 
 ---
 
-<p align="center">
-  <strong>VeriChain</strong> — Built for the <a href="https://runanywhere.ai/">RunAnywhere</a> Vibe Coding Challenge<br/>
-  <em>100% Private. Zero Cloud. Instant Verification.</em>
-</p>
+## 💡 The problem
+
+Edited Aadhaar cards and marksheets take minutes to make with free tools like **Canva** or online PDF editors.
+The person checking them — an employer, a college, a landlord — almost never has the original to compare with.
+And uploading someone's ID card to a cloud AI service is a privacy risk.
+
+**VeriChain's idea:** instead of comparing with the original, compare the document with four things a forger finds very
+hard to fake — and do it all on the user's own device.
+
+| # | Reference | In plain words | Example catch |
+|---|---|---|---|
+| 1 | **The document against itself** | A real page is made in one go — same ink, grain and font everywhere | A pasted "88" with darker ink than its row |
+| 2 | **Older versions hidden in the file** | Editors leave the old text under the new text, or keep the old version inside the PDF | The old "45" still sits under the new "85" |
+| 3 | **Signed data printed on it** | The Aadhaar Secure QR holds the real name, DOB, gender, address **and photo**, signed by UIDAI | QR says one date of birth, the card prints another |
+| 4 | **The document's own rules** | Check digits, totals, percentages, SGPA / CGPA arithmetic | A CGPA that doesn't equal credit points ÷ credits |
+
+---
+
+<a id="what-it-catches"></a>
+
+## 🎯 What it catches
+
+| Forgery | How VeriChain catches it | What the verdict says |
+|---|---|---|
+| Date of birth changed in **Canva** (whole PDF re-made) | Printed details vs the UIDAI-signed QR | `Date of birth: 01-01-1990 (QR) → 01-01-1991 (printed)` |
+| A digit typed over in an **online PDF editor** | Text, white boxes or annotations drawn over the old value — read *as it looks on the page* | `01/01/1990 → 01/01/1991`, boxed on the page |
+| **Photo swapped** on an Aadhaar card | Printed photo vs the photo signed inside the QR | `Photo doesn't match the signed QR photo` |
+| Name, gender, number or PIN code changed | Signed QR, Verhoeff check digit, all printed copies of the number must agree | `Name: … (QR) → … (printed)` |
+| DOB and gender **erased** from a phone photo | Every Aadhaar must print them — the empty spot is highlighted | `Date of birth and gender missing from the card` |
+| One mark raised, total forgotten | Column sums vs the Total row, obtained ≤ maximum, percentage | `Total 436 ≠ 476` |
+| Mark, total **and** percentage all changed consistently | The earlier version is recovered from inside the PDF | `88 → 98 · 436 → 446 · 72.67 → 74.33` |
+| CGPA or a grade raised on a grade card | SGPA = CP ÷ C, CGPA = cumulative CP ÷ cumulative C, Σ credits × grade points = CP | `CGPA doesn't match its credit points` |
+| A signed PDF changed after signing | The signed byte range no longer covers the file | `Changed after it was signed` |
+
+> All values above are made up. The test documents in `public/samples/` are fictional.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**Hidden earlier version recovered** — the forger fixed the total and the percentage too, but the PDF still remembers the old values.
+
+<img src="docs/screenshots/verdict-hidden-version.jpg" alt="Verdict: Edited — 88 → 98, 436 → 446, 72.67 → 74.33 recovered from inside the PDF"/>
+
+**Photo of a marksheet** — the marks no longer add up, and the pasted digits have a different grain and darker ink.
+
+<img src="docs/screenshots/verdict-photo.jpg" alt="Verdict for an edited photo: marks don't add up, different grain, darker ink"/>
+
+</td>
+<td width="50%" valign="top">
+
+**The Tamper Map** — every check paints one shared grid over the page, so the exact changed cells light up. On the right: every check that ran, on-device.
+
+<img src="docs/screenshots/tamper-map.jpg" alt="Tamper Map heatmap on the edited cells and the list of checks run on-device"/>
+
+</td>
+</tr>
+</table>
+
+---
+
+<a id="how-it-works"></a>
+
+## ⚙️ How it works
+
+```mermaid
+flowchart LR
+    U["📄 PDF / JPG / PNG"] --> R["Render page 1 + read its text<br/>(pdf.js · on-device OCR)"]
+    R --> P["PDF structure<br/>saved versions · signatures<br/>annotations · fonts · metadata"]
+    R --> X["Pixels<br/>grain · background · ELA<br/>EXIF preview · digit shapes"]
+    R --> Q["Signed data<br/>Aadhaar Secure QR<br/>+ signed photo"]
+    R --> D["Document rules<br/>check digit · totals<br/>SGPA / CGPA"]
+    P --> G["One shared 48-column grid<br/>(spatial hash map)"]
+    X --> G
+    Q --> G
+    D --> G
+    G --> F["Fusion → one verdict<br/>+ Tamper Map"]
+    F --> O["Plain-language reasons · on-device AI explanation<br/>SHA-256 fingerprint · Polygon proof"]
+```
+
+### 1 · Read the page the way a person sees it
+- **PDFs** are rendered with pdf.js, and every piece of text is taken with its exact position and font.
+- **Photos** are read with on-device OCR (Tesseract). The small identity block next to a photo gets a second, zoomed-in read.
+- **A "visible text" model:** when text, a white box or an annotation covers characters, the covered characters are
+  replaced with what is actually drawn there. So `2005` with a `6` typed over the `5` is read as `2006` — the value a
+  person sees.
+- **Reading order:** text is rebuilt into lines from its position on the page, not from the file's internal order (Canva
+  stores a label and its value far apart).
+
+### 2 · Run the checks
+
+<details>
+<summary><b>PDF structure</b> — the file's own history</summary>
+
+- **Saved versions:** every `%%EOF` marks a save. The file is cut back to an earlier save, both versions are rendered,
+  and the pixels and the text are compared → *"Earlier version found inside the file"*.
+- **Digital signatures:** the signed `/ByteRange` must cover the whole file. Data appended after signing is diffed
+  against the signed version; a file rewritten after signing (for example to remove a password) is reported as a re-save.
+- **Covered text:** text drawn over different text, text hidden under a white box, digits blanked out of a number.
+- **Annotations used as edits:** FreeText, Stamp, Square and Redact annotations sitting on existing characters.
+- **Fonts and metadata:** the same font embedded twice, one number in a font of its own, editors and design tools
+  (Canva, iLovePDF, Photoshop…) recorded as the producer.
+
+</details>
+
+<details>
+<summary><b>Aadhaar</b> — the signed QR, the photo and the card's own rules</summary>
+
+The Aadhaar Secure QR is not encrypted — it is **compressed and signed**, and its format is public:
+
+1. ZXing (WebAssembly) reads the QR → a decimal number a few thousand digits long.
+2. Number → bytes → gzip → fields separated by byte `255`: version, reference ID (its first 4 digits are the last 4 of the
+   Aadhaar number), name, DOB, gender, address, PIN code…
+3. Next comes the holder's **photo** as JPEG 2000, decoded in the browser with the OpenJPEG decoder that ships with pdf.js.
+4. The last 256 bytes are UIDAI's RSA signature.
+
+Then VeriChain checks:
+
+| Check | How |
+|---|---|
+| QR vs printed | Name (the card's name line *and* the letter's "To" name, word by word), DOB, gender, last 4 digits, PIN code |
+| Photo vs QR photo | The signed photo is slid over the printed photo at many sizes, scored by normalised cross-correlation of pixels and edges. Same picture ≈ 0.93–0.97, a different person ≈ 0.40–0.60 |
+| Check digit | Verhoeff — changing any single digit, or swapping two neighbours, always breaks it |
+| Required fields | Every card prints DOB (or year of birth) and gender; if they are missing, the spot where they belong is boxed |
+| Copies must agree | The number and the VID are printed several times; all copies must match |
+
+From images, OCR mistakes are expected, so a doubtful value is **read again, enlarged**, before it counts. An image too
+small to read reliably is reported as *"Couldn't verify — image too small"* rather than accused.
+
+</details>
+
+<details>
+<summary><b>Marksheets and grade cards</b> — the arithmetic</summary>
+
+- **Marks:** the table is rebuilt from positioned text; each column must add up to the Total row, obtained ≤ maximum,
+  and the percentage must equal obtained ÷ maximum × 100.
+- **Grade cards:** SGPA = credit points ÷ credits, CGPA = cumulative credit points ÷ cumulative credits, and
+  Σ (credits × grade points) + incentive points = credit points, on the standard 10-point scales (AA…FF, O / A+ … F).
+  A forger who raises one grade or the CGPA rarely recomputes every number.
+
+</details>
+
+<details>
+<summary><b>Pixels</b> — photos and screenshots</summary>
+
+- **Noise map:** grain in each small area compared with its neighbours (whited-out patches are smoother).
+- **Background micro-steps:** a slightly different white where a box was pasted.
+- **ELA (JPEG only):** areas that react differently to re-compression.
+- **EXIF:** editing software, dates, and the preview image stored inside the JPEG compared with the image itself.
+- **Digit consistency:** every number compared with its own row — ink, colour, sharpness, size, baseline.
+
+</details>
+
+### 3 · Fuse everything into one honest verdict
+
+Some checks are **proof** (the QR disagrees, the maths is wrong, an older version exists). Others are only **hints**
+(the grain looks different). Proof alone can say "Edited". Hints alone can only say "Suspicious" — unless two independent
+hints agree on the same spot. On ID cards (photos, emblems, colour bands), a single pixel hint is information only.
+
+| Verdict | When |
+|---|---|
+| 🟥 **Edited — evidence found** | At least one deterministic finding |
+| 🟨 **Suspicious** | Only warnings |
+| 🟩 **No signs of editing found** | Checks ran and found nothing — **never called "genuine"**: only the issuer's original can prove that |
+| 🟩 **Matches the registered original** | Same content as an original registered by the issuer |
+| ⬜ **Couldn't verify** | Too little could be checked (unreadable QR, image too small) |
+
+### 4 · With the original: the issuer registry
+An issuer can register a genuine file once. Any later copy is compared **cell by cell** on the same grid, and a
+**spatial Merkle root** — one hash per grid row — is the single value an issuer would anchor on Polygon or print as a QR.
+
+### 5 · Explain, fingerprint and prove
+- **On-device AI** (RunAnywhere SDK: LFM2-350M, Whisper, Piper, Silero VAD) explains the verdict in plain words and answers
+  questions by text or voice. **It explains — it never decides.** The verdict comes from the deterministic checks.
+- **SHA-256 + perceptual hash** fingerprints, and a proof on the **Polygon Amoy** testnet when MetaMask is connected
+  (otherwise a clearly labelled local proof).
+
+---
+
+<a id="tested-on"></a>
+
+## 🧪 Tested on
+
+Real e-Aadhaar PDFs, Aadhaar photos and university grade cards — originals and versions edited with **Canva**, an
+**online PDF editor** and photo editing — plus forgeries generated from the genuine files, and the nine fictional samples.
+
+| Group | Cases | Result |
+|---|---|---|
+| PDFs — edited (DOB, name, gender, number, PIN, photo swapped or pasted over, DOB erased, grade, SGPA, CGPA) | 15 | ✅ all flagged **Edited**, with the exact change and its place |
+| PDFs — genuine (incl. password-removed and re-saved copies) | 4 | ✅ all **No signs of editing** |
+| Images — edited (DOB changed or erased, photo swapped, name changed, grade / CGPA changed) | 10 | ✅ all flagged **Edited** |
+| Images — genuine (screenshots, WhatsApp-compressed, high-resolution, phone photos) | 7 | ✅ all **No signs of editing** |
+| Images — too small to read (≈550 px wide) | 2 | ✅ **Couldn't verify — image too small** (no false accusation) |
+| Built-in fictional samples | 9 | ✅ all as expected |
+| **Total** | **47** | **47 / 47** |
+
+Personal test documents are never part of this repository. You can run the same kind of matrix on your own files with
+the dev-only lab page (see below).
+
+---
+
+## 🔒 Privacy by design
+
+- **Nothing is uploaded.** PDF parsing, OCR, QR decoding, photo comparison, every check and the AI model run in the browser.
+- **Self-hosted engines.** pdf.js, Tesseract, ZXing and their WebAssembly files are served from `public/vendor/`
+  (copied on `npm install`), so no third-party server sees the document.
+- **No accounts, no analytics.** The registry and analysis records live in the browser's IndexedDB.
+- The only network calls are the optional blockchain transaction and the one-time AI model download.
+
+---
+
+## 🛠 Tech stack
+
+| Layer | Tools |
+|---|---|
+| App | Next.js 16 (App Router, Turbopack) · React 19 · TypeScript · Tailwind CSS 4 · Framer Motion · lucide-react |
+| Documents | pdf.js (`pdfjs-dist`, incl. OpenJPEG for JPEG 2000) · exifr |
+| Text & QR | tesseract.js (on-device OCR) · zxing-wasm (QR) |
+| On-device AI | RunAnywhere Web SDK — LFM2-350M (llama.cpp WASM), Whisper Tiny, Piper TTS, Silero VAD |
+| Proof | Web Crypto (SHA-256) · perceptual hash · ethers v6 → Polygon Amoy |
+| Offline | Service worker + web app manifest · COOP / COEP headers for multi-threaded WebAssembly |
+
+---
+
+<a id="run-it-locally"></a>
+
+## 🚀 Run it locally
+
+**Requirements:** Node.js 20.9+ and a Chromium-based browser (Chrome or Edge recommended).
+
+```bash
+git clone https://github.com/devenmundada/VeriChain.git
+cd VeriChain
+npm install        # also copies the pdf.js / Tesseract / ZXing runtimes into public/vendor
+npm run dev        # http://localhost:3000
+```
+
+```bash
+npm run build && npm start   # production build
+npm run make-samples         # rebuild the fictional sample documents (macOS)
+```
+
+Open the home page and click any **fictional sample** to see a verdict in about a second — no upload, no sign-up.
+
+**Regression lab (dev only):** serve a folder of test files on `127.0.0.1` with CORS enabled, then open
+`http://localhost:3000/lab?base=http://127.0.0.1:8765/&files=a.pdf,b.jpg` to run the real engine on each file and see its
+verdict and heatmap. The page returns 404 in production builds.
+
+**Deploying:** Vercel works out of the box. `next.config.ts` sends the `Cross-Origin-Opener-Policy` and
+`Cross-Origin-Embedder-Policy` headers that multi-threaded WebAssembly needs; keep them on any other host.
+
+---
+
+## 📁 Project structure
+
+<details>
+<summary>Where each part lives</summary>
+
+```
+src/
+├── app/
+│   ├── page.tsx                  # Main page: upload → verdict → Tamper Map → fingerprint → AI
+│   ├── verify/[id]/page.tsx      # Shows an analysis record stored on this device
+│   ├── api/verify/[id]/route.ts  # Stub API (verification happens client-side)
+│   └── lab/                      # Dev-only regression page (404 in production)
+├── lib/
+│   ├── forensicEngine.ts         # analyzeDocument(): runs every check, returns the verdict
+│   ├── AppContext.tsx            # Pipeline state, PDF password prompt, AI narration
+│   ├── hashEngine.ts             # SHA-256 + perceptual hash
+│   ├── blockchain.ts             # Polygon Amoy proof
+│   ├── runanywhere.ts            # On-device LLM, speech-to-text, text-to-speech, voice activity
+│   └── forensics/
+│       ├── pdfForensics.ts       # Saved versions, signatures, covered text, annotations, fonts, metadata
+│       ├── imageForensics.ts     # Noise map, background, ELA
+│       ├── exifForensics.ts      # EXIF + stored preview
+│       ├── glyphForensics.ts     # Each number vs its row
+│       ├── textLines.ts          # Reading-order lines from positioned text
+│       ├── ocr.ts · qr.ts        # Tesseract (incl. zoomed re-reads) · ZXing
+│       ├── aadhaar.ts            # Secure QR / XML QR parsing, Verhoeff
+│       ├── aadhaarChecks.ts      # QR vs printed, required fields, copies, PIN
+│       ├── photoMatch.ts         # Printed photo vs signed QR photo
+│       ├── aadhaarPhoto.ts       # JPEG 2000 decoding + finding the printed photo
+│       ├── marksheet.ts          # Totals, percentage, SGPA / CGPA
+│       ├── registry.ts           # Issuer registry, spatial Merkle root
+│       ├── fusion.ts             # One verdict + one heatmap
+│       └── types.ts              # Evidence, layers, the shared TamperGrid
+└── components/                   # VerdictCard, HeatmapViewer, checks panel, registry, AI panels…
+public/samples/                   # Nine fictional sample documents
+scripts/                          # Sample generator, WebAssembly asset copying
+```
+
+</details>
+
+---
+
+## ⚖️ Honest limits
+
+- A **blurry or forwarded** Aadhaar image can't have its dense QR read, so a changed name can't be proven from it
+  (required fields, number copies and the check digit are still checked).
+- The **UIDAI signature** inside the QR is read but not yet verified against UIDAI's certificate.
+- PDF signatures are checked for coverage, not for the signer's certificate.
+- A document **rebuilt from scratch** with every value consistent only shows its design-tool metadata — which is exactly
+  why the issuer registry exists.
+- The registry is a browser-local demo store, not a shared backend.
+
+## 🗺 Roadmap
+
+- Verify the UIDAI QR signature with UIDAI's public certificate
+- A shared issuer registry with an on-chain contract for originals and revocations
+- Copy-move detection for photos
+- More documents: PAN, driving licence, degree certificates
+- Camera capture with on-screen guidance for sharp, QR-readable photos
+
+---
+
+## 🙏 Acknowledgements
+
+[pdf.js](https://mozilla.github.io/pdf.js/) · [Tesseract.js](https://tesseract.projectnaptha.com/) ·
+[zxing-wasm](https://github.com/Sec-ant/zxing-wasm) · [OpenJPEG](https://www.openjpeg.org/) ·
+[RunAnywhere SDK](https://docs.runanywhere.ai/) · [ethers.js](https://docs.ethers.org/) · [Polygon](https://polygon.technology/) ·
+[Next.js](https://nextjs.org/)
+
+## 👤 Author
+
+**Deven Mundada** — [github.com/devenmundada](https://github.com/devenmundada)
+
+## 📄 License
+
+MIT
+
+<div align="center">
+<br/>
+<b>VeriChain</b> — find the edit, show the proof, keep the document on the device.
+</div>
